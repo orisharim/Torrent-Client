@@ -1,0 +1,6 @@
+bitstring
+aiohttp
+loguru
+pytest
+pytest-asyncio
+bencode.py
