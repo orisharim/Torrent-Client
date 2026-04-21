@@ -1,9 +1,10 @@
 services:
-  pyqt5:
+  torrent-client:
     build: .
-    container_name: pyqt5-env
+    container_name: torrent-client
     environment:
       - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./:/workspace
