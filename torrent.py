@@ -8,7 +8,10 @@ class Torrent:
         self._raw = self._read_file(path)
 
         # decoded structure (bencoded → Python)
-        self.meta = self._decode()
+        meta, _, info_bounds = decode(self._raw, capture_info=True)
+
+        self.meta = meta
+        self.info_start, self.info_end = info_bounds
 
         # top-level fields
         self.announce = None
@@ -26,16 +29,12 @@ class Torrent:
         # run parsing pipeline
         self._parse()
 
-    # -------------------------
     # Step 1: read file
-    # -------------------------
     def _read_file(self, path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
 
-    # -------------------------
     # Step 2: decode bencode
-    # -------------------------
     def _decode(self):
         data, _ = decode(self._raw)
         return data
@@ -60,8 +59,8 @@ class Torrent:
 
     # Step 4: compute info_hash
     def _compute_info_hash(self):
-        encoded_info = encode(self.info)
-        self.info_hash = hashlib.sha1(encoded_info).digest()
+        info_bytes = self._raw[self.info_start:self.info_end]
+        self.info_hash = hashlib.sha1(info_bytes).digest()
 
     # Step 5: split pieces blob into list of 20-byte hashes for easier access
     def _split_pieces(self):
@@ -80,6 +79,3 @@ class Torrent:
             "length": self.length,
             "info_hash": None if self.info_hash is None else self.info_hash.hex()
         }
-        
-t = Torrent("C:\\Users\\itays\\Downloads\\ubuntu-26.04-desktop-amd64.iso.torrent")
-print(t.summary())
