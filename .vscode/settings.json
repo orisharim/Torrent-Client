@@ -1,0 +1,12 @@
+{
+  "python.analysis.autoImportCompletions": true,
+  "python.languageServer": "Pylance",
+  "python.analysis.indexing": true,
+  "editor.quickSuggestions": {
+    "other": true,
+    "comments": false,
+    "strings": true
+  },
+  "editor.suggestOnTriggerCharacters": true,
+  "editor.wordBasedSuggestions": "off"
+}

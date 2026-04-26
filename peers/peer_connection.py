@@ -137,11 +137,12 @@ class PeerConnection:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_REQUEST, payload)
 
+   
     async def cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
-    async def read_piece(self) -> tuple[int, int, bytes]:
+    async def read_block(self) -> tuple[int, int, bytes]:
         message_id, payload = await self.read_message()
         if message_id != self.MESSAGE_PIECE:
             raise ValueError("expected piece message")
@@ -151,6 +152,7 @@ class PeerConnection:
         piece_index, begin = struct.unpack(">II", payload[:8])
         block = payload[8:]
         return piece_index, begin, block
+    
     
     #wrap them with timeout to prevent hanging if the peer is unresponsive
     async def _read_exactly(self, size: int) -> bytes:
