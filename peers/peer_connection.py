@@ -44,7 +44,7 @@ class PeerConnection:
         self.writer.close()
         await self.writer.wait_closed() #make sure the connection is fully closed
 
-    #async version of __enter__ and __exit__ to use with async
+    #async version of __enter__ and __exit__ ``
     async def __aenter__(self) -> "PeerConnection":
         await self.connect()
         return self
@@ -133,21 +133,11 @@ class PeerConnection:
         payload = struct.pack(">I", piece_index)
         await self.send_message(self.MESSAGE_HAVE, payload)
 
-    async def request_block(
-        self,
-        piece_index: int,
-        begin: int,
-        length: int = DEFAULT_BLOCK_LENGTH,
-    ) -> None:
+    async def request_block(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_REQUEST, payload)
 
-    async def cancel_request(
-        self,
-        piece_index: int,
-        begin: int,
-        length: int = DEFAULT_BLOCK_LENGTH,
-    ) -> None:
+    async def cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
