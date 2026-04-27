@@ -4,7 +4,8 @@ from peers.peer_connection import PeerConnection
 from peers.piece import Piece
 
 class PeerManager:
-    def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int) -> None:
+    def __init__(
+        self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int) -> None:
         # get from tracker
         self.peers: list[PeerConnection] = []
         for ip, port in peers_info:
@@ -12,6 +13,7 @@ class PeerManager:
         # get from torrent parser
         self.info_hash = info_hash
         self.piece_length = piece_length
+        self.total_piece_count = total_piece_count
 
         self.bitfield: bytes = b""  # bitfield of pieces we have
         self.downloaded_pieces: set[int] = set()
@@ -32,8 +34,6 @@ class PeerManager:
                 await peer.connect()
                 await peer.send_handshake()
                 await peer.read_bitfield()
-                next_piece_idx = await self._get_next_piece_index()
-                await peer.request_piece(next_piece_idx)
                 
             except Exception as e:
                 print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
@@ -41,6 +41,18 @@ class PeerManager:
     async def close_all(self) -> None:
         for peer in self.peers:
             await peer.close()
+            
+    async def download_all_pieces(self) -> None:
+        while True:
+            next_piece = await self._get_next_piece_index()
+            if next_piece is None:
+                break
+
+            piece_index, selected_peer = next_piece
+            self.requested_pieces.add(piece_index)
+            await self._request_piece(selected_peer, piece_index)
+            self.downloaded_pieces.add(piece_index)
+            self.requested_pieces.discard(piece_index)
 
     async def _get_piece(self) -> Optional[bytes]:
         for peer in self.peers:
@@ -52,32 +64,42 @@ class PeerManager:
                 return piece
         return None
     
-    async def _get_next_piece_index(self) -> Optional[int]:
+    async def _get_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
         
-        pieces_counts : list[(int, int)] = []
-        for idx in range(len(self.bitfield) * 8):
+        pieces_counts: list[tuple[int, int, list[PeerConnection]]] = []
+
+        for idx in range(self.total_piece_count):
             if self._has_piece(self.bitfield, idx) or idx in self.requested_pieces or idx in self.downloaded_pieces:
                 continue
             
             count = 0
+            peers_with_piece = []
             for peer in self.peers:
-                if not peer.bitfield:
+                if peer.choked or not peer.bitfield:
                     continue
                 if self._has_piece(peer.bitfield, idx):
                     count += 1
+                    peers_with_piece.append(peer)
 
             if count > 0:    
-                pieces_counts.append((idx, count))
-        
+                pieces_counts.append((idx, count, peers_with_piece))
+
         if not pieces_counts:
             return None
         
         min_count = pieces_counts[0][1] 
-        for _, count in pieces_counts:
+        for _, count, _  in pieces_counts:
             if count < min_count:
                 min_count = count
-        rarest_pieces = [idx for idx, count in pieces_counts if count == min_count]
-        return random.choice(rarest_pieces)
+                
+        rarest_pieces: list[tuple[int, list[PeerConnection]]] = []
+        for idx, count, peer_connection in pieces_counts:
+            if min_count == count:
+                rarest_pieces.append((idx, peer_connection))
+
+        chosen_piece = random.choice(rarest_pieces)
+        chosen_peer = random.choice(chosen_piece[1])
+        return chosen_piece[0], chosen_peer
 
     # takes a bitfield and a piece idx and returns whether the bitfield indicates that the piece is there
     def _has_piece(self, bitfield: bytes, piece_index: int) -> bool:
