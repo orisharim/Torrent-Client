@@ -1,5 +1,5 @@
 import asyncio
-from asyncio import tasks
+from asyncio import TaskGroup
 import random
 from typing import Optional
 from peers.peer_connection import PeerConnection
@@ -9,67 +9,98 @@ class PeerManager:
 
     PIECES_AT_ONCE = 5
 
-    def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int) -> None:
+    def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int, peer_id: bytes) -> None:
         self.peers: list[PeerConnection] = []
         for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, info_hash))
+            self.peers.append(PeerConnection(ip, port, info_hash, peer_id))
 
         self.info_hash = info_hash
         self.piece_length = piece_length
         self.total_piece_count = total_piece_count
-
+        self.peer_id = peer_id
+        
         self.bitfield: bytes = b""  # bitfield of pieces we have
         self.downloaded_pieces: set[int] = set()
         self.requested_pieces: set[int] = set()
+        
+        
+        self.paused = False
 
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
         self.peers = []
         for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, self.info_hash))
-        await self.connect_to_peers()
+            self.peers.append(PeerConnection(ip, port, self.info_hash, self.peer_id))
 
-    async def add_peers(self, peers_info: list[tuple[str, int]]) -> None:
-        for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, self.info_hash))
-        await self.connect_to_peers()
-
-    async def connect_to_peers(self) -> None:
-        for peer in self.peers:
+    async def add_new_peers(self, new_peers_info: list[tuple[str, int]]) -> None:
+        for ip, port in new_peers_info:
+            self.peers.append(PeerConnection(ip, port, self.info_hash, self.peer_id))
+    
+    
+    async def connect_to_unconnected_peers(self) -> None:        
+        async def _connect_to_peer(peer: PeerConnection) -> None:
+            if peer.bitfield is not None: #connect to peer only if we haven't already connected to it and got its bitfield
+                return
             try:
                 await peer.connect()
                 await peer.send_handshake()
                 await peer.read_bitfield()
-                
+                  
             except Exception as e:
                 print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
-
+        async with TaskGroup() as tg:
+            for peer in self.peers:
+                tg.create_task(_connect_to_peer(peer))
+        
+    async def connect_to_all_peers(self) -> None:
+        await self.close_all()
+        
+        async def _connect_to_peer(peer: PeerConnection) -> None:
+            if peer.bitfield is not None: #connect to peer only if we haven't already connected to it and got its bitfield
+                return
+            try:
+                await peer.connect()
+                await peer.send_handshake()
+                await peer.read_bitfield()
+                  
+            except Exception as e:
+                print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
+            
+        async with TaskGroup() as tg:
+            for peer in self.peers:
+                tg.create_task(_connect_to_peer(peer))
+        
     async def close_all(self) -> None:
         for peer in self.peers:
             await peer.close()
             
-    async def download_all_pieces(self) -> None:
-        await self.connect_to_peers() #make sure we're connected to all peers before starting the download loop
+    async def pause_downloads(self) -> None:
+        self.paused = True
+    
+    async def download_pieces(self) -> None:
+        if self.paused:
+            return
 
-        #run PIECES_AT_ONCE workers that will download pieces in parallel until all pieces are downloaded
-        async def worker() -> None:
-            while len(self.downloaded_pieces) < self.total_piece_count:
-                piece = await self.download_piece()
-                if piece is None:
-                    return
+        download_tasks = []
+        for _ in range(self.PIECES_AT_ONCE):
+            task = asyncio.create_task(self._download_piece())
+            download_tasks.append(task)
 
-        await asyncio.gather(*(worker() for _ in range(self.PIECES_AT_ONCE)))
-                    
-    async def download_piece(self) -> Optional[Piece]:
+        await asyncio.gather(*download_tasks)
+       
+    async def _download_piece(self) -> Optional[Piece]:
         next_piece = await self._get_next_piece_index()
         if next_piece is None:
             return None
 
         piece_index, selected_peer = next_piece
         self.requested_pieces.add(piece_index)
-        blocks = await self._request_piece(selected_peer, piece_index)
+        piece = await self._request_piece(selected_peer, piece_index)
+        if piece is None:
+            self.requested_pieces.discard(piece_index)
+            return None
         self.downloaded_pieces.add(piece_index)
         self.requested_pieces.discard(piece_index)
-        return Piece(index=piece_index, blocks=blocks) # TODO: store pieces to storage
+        return piece # TODO: store pieces to storage
 
     async def _get_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
         
@@ -119,18 +150,18 @@ class PeerManager:
         return (bitfield[byte_index] & mask) != 0
 
 
-    async def _request_piece(self, peer: PeerConnection, piece_index: int) -> Optional[bytes]:
+    async def _request_piece(self, peer: PeerConnection, piece_index: int) -> Optional[Piece]:
         if peer.choked:
             return None
 
         # request blocks of the piece
         piece_length = self.piece_length
-        blocks = []
+        blocks: list[tuple[int, int, bytes]] = []
         for begin in range(0, piece_length, PeerConnection.DEFAULT_BLOCK_LENGTH):
             block_length = min(PeerConnection.DEFAULT_BLOCK_LENGTH, piece_length - begin)
             await peer.request_block(piece_index, begin, block_length)
-            block = await peer.read_block()
-            blocks.append(block)
+            block_index, block_begin, block = await peer.read_block()
+            blocks.append((block_index, block_begin, block))
 
-        return b"".join(blocks) 
+        return Piece(piece_index, blocks)
     
