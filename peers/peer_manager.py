@@ -1,16 +1,19 @@
+import asyncio
+from asyncio import tasks
 import random
 from typing import Optional
 from peers.peer_connection import PeerConnection
 from peers.piece import Piece
 
 class PeerManager:
-    def __init__(
-        self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int) -> None:
-        # get from tracker
+
+    PIECES_AT_ONCE = 5
+
+    def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int) -> None:
         self.peers: list[PeerConnection] = []
         for ip, port in peers_info:
             self.peers.append(PeerConnection(ip, port, info_hash))
-        # get from torrent parser
+
         self.info_hash = info_hash
         self.piece_length = piece_length
         self.total_piece_count = total_piece_count
@@ -23,10 +26,12 @@ class PeerManager:
         self.peers = []
         for ip, port in peers_info:
             self.peers.append(PeerConnection(ip, port, self.info_hash))
+        await self.connect_to_peers()
 
     async def add_peers(self, peers_info: list[tuple[str, int]]) -> None:
         for ip, port in peers_info:
             self.peers.append(PeerConnection(ip, port, self.info_hash))
+        await self.connect_to_peers()
 
     async def connect_to_peers(self) -> None:
         for peer in self.peers:
@@ -43,27 +48,29 @@ class PeerManager:
             await peer.close()
             
     async def download_all_pieces(self) -> None:
-        while True:
-            next_piece = await self._get_next_piece_index()
-            if next_piece is None:
-                break
+        await self.connect_to_peers() #make sure we're connected to all peers before starting the download loop
 
-            piece_index, selected_peer = next_piece
-            self.requested_pieces.add(piece_index)
-            await self._request_piece(selected_peer, piece_index)
-            self.downloaded_pieces.add(piece_index)
-            self.requested_pieces.discard(piece_index)
+        #run PIECES_AT_ONCE workers that will download pieces in parallel until all pieces are downloaded
+        async def worker() -> None:
+            while len(self.downloaded_pieces) < self.total_piece_count:
+                piece = await self.download_piece()
+                if piece is None:
+                    return
 
-    async def _get_piece(self) -> Optional[bytes]:
-        for peer in self.peers:
-            if peer.choked:
-                continue
-            piece = None
-            # piece = await request_piece()
-            if piece is not None:
-                return piece
-        return None
-    
+        await asyncio.gather(*(worker() for _ in range(self.PIECES_AT_ONCE)))
+                    
+    async def download_piece(self) -> Optional[Piece]:
+        next_piece = await self._get_next_piece_index()
+        if next_piece is None:
+            return None
+
+        piece_index, selected_peer = next_piece
+        self.requested_pieces.add(piece_index)
+        blocks = await self._request_piece(selected_peer, piece_index)
+        self.downloaded_pieces.add(piece_index)
+        self.requested_pieces.discard(piece_index)
+        return Piece(index=piece_index, blocks=blocks) # TODO: store pieces to storage
+
     async def _get_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
         
         pieces_counts: list[tuple[int, int, list[PeerConnection]]] = []
