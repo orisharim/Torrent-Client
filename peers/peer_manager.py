@@ -1,5 +1,6 @@
 import asyncio
 from asyncio import TaskGroup
+from hashlib import sha1
 import random
 from typing import Optional
 from peers.peer_connection import PeerConnection
@@ -8,6 +9,7 @@ from peers.piece import Piece
 class PeerManager:
 
     PIECES_AT_ONCE = 5
+    CONNECTION_TIMEOUT = 10.0
 
     def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int, peer_id: bytes) -> None:
         self.peers: list[PeerConnection] = []
@@ -52,15 +54,14 @@ class PeerManager:
         if peer.bitfield is not None: #connect to peer only if we haven't already connected to it and got its bitfield
             return
         try:
-            async with asyncio.timeout(10):    
+            async with asyncio.timeout(self.CONNECTION_TIMEOUT):    
                 await peer.connect()
                 await peer.send_handshake()
                 await peer.read_bitfield()
 
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
-    
-            
+       
     async def close_all(self) -> None:
         for peer in self.peers:
             await peer.close()
@@ -108,8 +109,11 @@ class PeerManager:
                 block_index, block_begin, block = await selected_peer.read_block()
                 blocks.append((block_index, block_begin, block))
 
-            piece = Piece(piece_index, blocks)
-            self.downloaded_pieces.add(piece_index)
+            piece = Piece(blocks)
+            # self.downloaded_pieces.add(piece_index)
+            if(self._validate_piece(piece)):
+                # self.store_piece(piece)
+                pass
             return piece # TODO: store pieces to storage
         finally:
             self.requested_pieces.discard(piece_index)
@@ -161,5 +165,10 @@ class PeerManager:
         mask = 1 << (7 - bit_offset)
         return (bitfield[byte_index] & mask) != 0
 
+    
+    def _validate_piece(self, piece: Piece) -> bool:
+        blocks = piece.get_assembled_data()
+        piece_hash = sha1(blocks).digest()
+        return piece_hash == self.info_hash[piece.index * self.piece_length]
 
     
