@@ -1,6 +1,8 @@
 import React from "react";
 import { Grid } from "./Grid";
 import Toolbar from "../ToolBar/Toolbar";
+import { HomePage } from "../Views/HomePage";
+import {TorrentPage} from "../Views/TorrentPage";
 
 type DashboardProps = {
   page: string;
@@ -13,14 +15,17 @@ export const Dashboard = ({ page }: DashboardProps) => {
 
         <Toolbar/>
         <Grid/>
-      {page === "home" && <div>Home Page</div>}
+      {page === "home" && <HomePage/>}
 
-      {page === "torrent" && <div>Torrent</div>}
+      {page === "torrent" && <TorrentPage/>}
 
       {page === "network" && <div>Network Page</div>}
 
       {page === "devices" && <div>Devices Page</div>}
 
     </div>
+
+
   );
 };
+
