@@ -12,31 +12,33 @@ class PieceManager:
     PIECES_AT_ONCE = 5
     CONNECTION_TIMEOUT = 10.0
 
-    def __init__(self, peers_info: list[tuple[str, int]], info_hash: bytes, piece_length: int, total_piece_count: int, peer_id: bytes) -> None:
+    def __init__(self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata : Torrent) -> None:
         self.peers: list[PeerConnection] = []
         for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, info_hash, peer_id))
+            self.peers.append(PeerConnection(ip, port, torrent_metadata.info_hash, peer_id))
 
-        self.info_hash = info_hash
-        self.piece_length = piece_length
-        self.total_piece_count = total_piece_count
+        self.torrent_metadata = torrent_metadata
         self.peer_id = peer_id
         
         self.bitfield: bytes = b""  # bitfield of pieces we have
         self.requested_pieces: set[int] = set()
         
-        self.torrent_storage = TorrentStorage(piece_length, total_piece_count)
+        self.torrent_storage = TorrentStorage(
+            piece_length=torrent_metadata.piece_length,
+            total_piece_count=torrent_metadata.total_piece_count,
+            files=torrent_metadata.files
+        )
         
         self.paused = False
 
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
         self.peers = []
         for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, self.info_hash, self.peer_id))
+            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]) -> None:
         for ip, port in new_peers_info:
-            self.peers.append(PeerConnection(ip, port, self.info_hash, self.peer_id))
+            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
     
     async def connect_to_unconnected_peers(self) -> None:        
         async with TaskGroup() as tg:
@@ -123,7 +125,7 @@ class PieceManager:
         pieces_counts: list[tuple[int, int, list[PeerConnection]]] = []
 
         for idx in range(self.total_piece_count):
-            if self._has_piece(self.bitfield, idx) or idx in self.requested_pieces or idx in self.torrent_storage.downloaded_pieces:
+            if self._has_piece(self.bitfield, idx) or idx in self.requested_pieces or idx in self.torrent_storage.downloaded_pieces.keys():
                 continue
             
             count = 0
