@@ -76,8 +76,8 @@ export const TorrentTable = () => {
   };
 
   return (
-    <div className="p-4 w-full">
-      <table className="w-full border-2 border-blue-100 rounded shadow">
+    <div className="bg-white border-2 border-blue-200 rounded-lg overflow-hidden shadow-sm">
+      <table className="w-full text-sm">
         <TableHead />
 
         <tbody>

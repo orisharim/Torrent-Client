@@ -1,42 +1,121 @@
-import {Plus , Link} from 'lucide-react'
+import React from "react";
+import {
+  Plus,
+  Link,
+  Download,
+  Upload,
+  Activity,
+  Share2,
+  FileDown,
+} from "lucide-react";
 
+const stats = [
+  { label: "Download", value: "1.8 MB/s", icon: <Download className="w-5 h-5" /> },
+  { label: "Upload", value: "0.3 MB/s", icon: <Upload className="w-5 h-5" /> },
+  { label: "Active", value: "3", icon: <Activity className="w-5 h-5" /> },
+  { label: "Seeding", value: "2", icon: <Share2 className="w-5 h-5" /> },
+];
+
+const recentTorrents = [
+  { id: 1, name: "ubuntu.iso", size: "2.5 GB", status: "Completed" },
+  { id: 2, name: "movie.mp4", size: "1.2 GB", status: "Paused" },
+  { id: 3, name: "linux_tools.tar.gz", size: "4.7 GB", status: "Downloading" },
+];
 
 export const HomePage = () => {
   return (
-    <div className="p-4 flex flex-col gap-4">
-      {/* header */}
-      <span className='h-4 font-bold text-2xl mb-4 text-center'>Home</span>
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-stone-100 p-4 rounded shadow">Download: 
-          const downloading = 
+    <div className="w-full min-h-screen bg-stone-50 p-6 flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-stone-800">Home</h1>
+          <p className="text-sm text-stone-500 mt-1">
+            Overview of your torrent activity
+          </p>
         </div>
-        <div className="bg-stone-100 p-4 rounded shadow">Upload: 0.3 MB/s</div>
-        <div className="bg-stone-100 p-4 rounded shadow">Active: 3</div>
-        <div className="bg-stone-100 p-4 rounded shadow">Seeding: 2</div>
+
+        <div className="flex gap-2">
+          <button className="flex items-center gap-2 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm shadow-sm transition">
+            <Plus size={16} />
+            Add Torrent
+          </button>
+
+          <button className="flex items-center gap-2 px-3 py-2 border border-blue-200 hover:bg-blue-50 text-stone-600 rounded-md text-sm transition">
+            <Link size={16} />
+            Magnet
+          </button>
+        </div>
       </div>
 
-      {/* Quick actions */}
-      <div className='h-14 sticky top-0 z-10 flex items-center gap-1 px-2 bg-stone-100 font-bold shadow'>
-        <button className='flex items-center gap-2 px-3 py-2 rounded hover:border-2'>
-          <Plus size={18}/>
-          <span className="hidden sm:inline">Add Torrent</span>
-        </button>
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className="bg-white border border-blue-200 rounded-lg p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-stone-500">{stat.label}</p>
+              <div className="h-9 w-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                {stat.icon}
+              </div>
+            </div>
 
-        <button className='flex items-center gap-2 px-3 py-2 rounded hover:border-2'>
-          <Link size={18}/>
-          <span className="hidden sm:inline">Magnet</span>
-        </button>
+            <p className="text-xl font-bold text-stone-800 mt-2">
+              {stat.value}
+            </p>
+          </div>
+        ))}
       </div>
-      
 
       {/* Recent */}
-      <div className="bg-stone-100 p-4 rounded shadow">
-        <h2 className="font-bold mb-2">Recent Torrents</h2>
-        <div>ubuntu.iso - Completed</div>
-        <div>movie.mp4 - Paused</div>
-      </div>
+      <div className="w-full border border-blue-200 rounded-xl overflow-hidden shadow-sm bg-white">
+        <div className="px-4 py-3 border-b border-blue-100 bg-blue-50 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-blue-800 flex items-center gap-2">
+            <FileDown className="w-4 h-4" />
+            Recent Torrents
+          </h2>
 
+          <span className="text-xs text-stone-500">
+            {recentTorrents.length} items
+          </span>
+        </div>
+
+        <table className="w-full text-sm">
+          <thead className="bg-white border-b border-blue-100">
+            <tr className="text-left text-stone-500">
+              <th className="px-4 py-3 font-medium">Name</th>
+              <th className="px-4 py-3 font-medium">Size</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {recentTorrents.map((torrent, index) => (
+              <tr
+                key={torrent.id}
+                className={`border-b border-blue-50 last:border-b-0 transition ${
+                  index % 2 === 1 ? "bg-blue-50/40" : "bg-white"
+                } hover:bg-blue-50`}
+              >
+                <td className="px-4 py-4 font-medium text-stone-800">
+                  {torrent.name}
+                </td>
+
+                <td className="px-4 py-4 text-stone-600">
+                  {torrent.size}
+                </td>
+
+                <td className="px-4 py-4">
+                  <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
+                    {torrent.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

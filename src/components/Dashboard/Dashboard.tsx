@@ -3,6 +3,9 @@ import { Grid } from "./Grid";
 import Toolbar from "../ToolBar/Toolbar";
 import { HomePage } from "../Views/HomePage";
 import {TorrentPage} from "../Views/TorrentPage";
+import { FeedsPage } from "../Views/FeedsPage";
+import { DevicePage } from "../Views/DevicePage";
+import { SettingsPage } from "../Views/SettingsPage";
 
 type DashboardProps = {
   page: string;
@@ -19,9 +22,11 @@ export const Dashboard = ({ page }: DashboardProps) => {
 
       {page === "torrent" && <TorrentPage/>}
 
-      {page === "network" && <div>Network Page</div>}
+      {page === "network" && <FeedsPage/>}
 
-      {page === "devices" && <div>Devices Page</div>}
+      {page === "devices" && <DevicePage/>}
+       
+      {page === "settings" && <SettingsPage/> }
 
     </div>
 
