@@ -2,7 +2,7 @@ import { Plus, Link, Play, Pause, Square, Trash2, Search } from "lucide-react";
 
 const Toolbar = () => {
   return (
-    <div className="h-14 sticky top-0 z-10 flex items-center gap-1 px-2 bg-stone-300">
+    <div className="h-14 sticky top-0 z-10 flex items-center gap-1 px-2 bg-blue-100">
       <button className="flex items-center gap-2 px-3 py-2 rounded hover:bg-stone-50">
         <Plus size={18} />
         <span className="hidden sm:inline">Add</span>

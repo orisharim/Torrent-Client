@@ -77,7 +77,7 @@ export const TorrentTable = () => {
 
   return (
     <div className="p-4 w-full">
-      <table className="w-full bg-stone-50 rounded-md">
+      <table className="w-full border-2 border-blue-100 rounded shadow">
         <TableHead />
 
         <tbody>
@@ -95,7 +95,7 @@ export const TorrentTable = () => {
       </table>
 
       {deleteId !== null && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-9999">
           <div className="bg-white p-6 rounded shadow-lg w-80">
             <h2 className="text-lg font-semibold mb-3">Delete Torrent?</h2>
 
@@ -106,7 +106,7 @@ export const TorrentTable = () => {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setDeleteId(null)}
-                className="px-3 py-1 rounded bg-stone-300 hover:bg-stone-400"
+                className="px-3 py-1 rounded bg-blue-100 hover:bg-blue-400"
               >
                 Cancel
               </button>
@@ -131,7 +131,7 @@ export const TorrentTable = () => {
 const TableHead = () => {
   return (
     <thead>
-      <tr className="text-sm border-b border-stone-300">
+      <tr className="text-sm border-b rounded-2xl border-blue-100">
         <th className="text-start p-1.5">Name</th>
         <th className="text-start p-1.5">Size</th>
         <th className="text-start p-1.5">Progress</th>
@@ -162,14 +162,14 @@ const TableRow = ({
   const [open, setOpen] = useState(false);
 
   return (
-    <tr className={`text-sm ${index % 2 ? "bg-stone-300" : ""}`}>
+    <tr className={`text-sm ${index % 2 ? "bg-blue-100" : ""}`}>
       <td className="p-1.5">{torrent.name}</td>
       <td className="p-1.5">{torrent.size}GB</td>
 
       <td className="p-1.5">
         <div className="w-full bg-stone-200 rounded-full h-5 overflow-hidden">
           <div
-            className="bg-stone-500 h-full rounded-full text-center text-xs leading-5 transition-all duration-500"
+            className="bg-blue-500 h-full rounded-full text-center text-xs text-white leading-5 transition-all duration-500"
             style={{ width: `${torrent.progress}%` }}
           >
             {Math.round(torrent.progress)}%
@@ -187,14 +187,14 @@ const TableRow = ({
       <td className="p-1.5 relative">
         <button
           onClick={() => setOpen(!open)}
-          className="p-1 rounded hover:bg-stone-400"
+          className="p-1 rounded hover:bg-blue-400"
           title="Actions"
         >
           <MoreVertical size={18} />
         </button>
 
         {open && (
-          <div className="absolute right-0 mt-2 w-36 bg-white border border-stone-300 rounded shadow-md z-50">
+          <div className="absolute right-0 mt-2 w-36 bg-white border border-blue-100 rounded shadow-md z-50">
             {(torrent.status === "Downloading" ||
               torrent.status === "Seeding") && (
               <button
@@ -202,7 +202,7 @@ const TableRow = ({
                   onPause(torrent.id);
                   setOpen(false);
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-200"
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-blue-200"
               >
                 <Pause size={16} />
                 Pause

@@ -23,11 +23,11 @@ export const Sidebar = ({
 }: SidebarProps) => {
   const menuItem = (active: boolean) =>
     `w-full flex items-center gap-3 px-4 py-3 hover:bg-stone-50 transition-colors ${
-      active ? "bg-stone-50" : "bg-stone-300"
+      active ? "bg-stone-50" : "bg-blue-100"
     }`;
 
   return (
-    <div className="h-screen flex flex-col bg-stone-300">
+    <div className="h-screen flex flex-col bg-blue-100">
       {/* Header */}
       <div className="h-16 px-4 flex items-center justify-between">
         {isSidebarOpen && (

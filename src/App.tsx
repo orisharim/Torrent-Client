@@ -9,7 +9,7 @@ function App() {
 
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-stone-300">
+    <div className="flex h-screen w-screen overflow-hidden bg-stone-50">
       
       <div
         className={`${
