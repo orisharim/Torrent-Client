@@ -31,6 +31,8 @@ class PieceManager:
 
         self.bitfield: bytes = b""  # bitfield of pieces we have
         self.requested_pieces: set[int] = set()
+        self._requested_pieces_lock = asyncio.Lock()
+        self._peers_lock = asyncio.Lock()
 
         self.torrent_storage = TorrentStorage(
             piece_length=torrent_metadata.piece_length,
@@ -40,17 +42,21 @@ class PieceManager:
         self.paused = False
 
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
-        self.peers = []
-        for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
+        async with self._peers_lock:
+            self.peers = []
+            for ip, port in peers_info:
+                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]) -> None:
-        for ip, port in new_peers_info:
-            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
+        async with self._peers_lock:
+            for ip, port in new_peers_info:
+                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
 
     async def connect_to_unconnected_peers(self) -> None:
+        async with self._peers_lock:
+            peers_snapshot = list(self.peers)
         async with TaskGroup() as tg:
-            for peer in self.peers:
+            for peer in peers_snapshot:
                 # Connect only when a peer has not completed bitfield exchange yet.
                 if peer.bitfield is not None:
                     continue
@@ -59,8 +65,10 @@ class PieceManager:
     async def connect_to_all_peers(self) -> None:
         await self.close_all()
 
+        async with self._peers_lock:
+            peers_snapshot = list(self.peers)
         async with TaskGroup() as tg:
-            for peer in self.peers:
+            for peer in peers_snapshot:
                 tg.create_task(self._connect_to_peer(peer))
 
     async def _connect_to_peer(self, peer: PeerConnection) -> None:
@@ -79,13 +87,17 @@ class PieceManager:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
 
     async def close_all(self) -> None:
-        for peer in self.peers:
+        async with self._peers_lock:
+            peers_snapshot = list(self.peers)
+        for peer in peers_snapshot:
             await peer.close()        
     
     async def pause_downloads(self) -> None:
         self.paused = True
-        for peer in self.peers:
-            if peer.interested:
+        async with self._peers_lock:
+            peers_snapshot = list(self.peers)
+        for peer in peers_snapshot:
+            if await peer.is_interested():
                 await peer.send_not_interested()
 
     async def resume_downloads(self) -> None:
@@ -104,13 +116,16 @@ class PieceManager:
             return None
 
         piece_index, selected_peer = next_piece
-        self.requested_pieces.add(piece_index)
+        async with self._requested_pieces_lock:
+            self.requested_pieces.add(piece_index)
         try:
             if self.paused:
                 return None
 
             candidate_peers = [selected_peer]
-            for peer in self.peers:
+            async with self._peers_lock:
+                peers_snapshot = list(self.peers)
+            for peer in peers_snapshot:
                 if peer is not selected_peer and peer.bitfield is not None and not peer.choked and self._has_piece(peer.bitfield, piece_index):
                     candidate_peers.append(peer)
 
@@ -123,7 +138,8 @@ class PieceManager:
 
             return None
         finally:
-            self.requested_pieces.discard(piece_index)
+            async with self._requested_pieces_lock:
+                self.requested_pieces.discard(piece_index)
 
     async def _download_piece_from_peer(self, piece_index: int, peer: PeerConnection) -> Optional[Piece]:
         if peer.choked:
@@ -150,6 +166,7 @@ class PieceManager:
                 await peer.send_not_interested()
                 return None
 
+            #request all possible blocks
             while pending and len(in_flight) < self.MAX_IN_FLIGHT_BLOCKS:
                 begin = pending.popleft()
                 if begin in received:
@@ -160,11 +177,12 @@ class PieceManager:
             if not in_flight:
                 return None
 
+            #receive block
             try:
                 async with asyncio.timeout(self.BLOCK_DOWNLOAD_TIMEOUT):
                     block_index, block_begin, block = await peer.read_block()
             except TimeoutError:
-                # Requeue all inflight blocks on timeout to recover from dropped packets.
+                # requeue all inflight blocks on timeout to recover from dropped packets
                 timed_out_blocks = list(in_flight)
                 in_flight.clear()
                 for begin in timed_out_blocks:
@@ -191,10 +209,10 @@ class PieceManager:
 
             received[block_begin] = block
 
-        ordered_blocks: list[tuple[int, int, bytes]] = [
-            (piece_index, begin, received[begin])
-            for begin in sorted(received.keys())
-        ]
+        ordered_blocks: list[tuple[int, int, bytes]]
+        for begin in sorted(received.keys()):
+            ordered_blocks.append((piece_index, begin, received[begin]))
+       
         piece = Piece(ordered_blocks)
         if not self._validate_piece(piece_index, piece):
             return None
@@ -205,13 +223,22 @@ class PieceManager:
     async def _get_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
         pieces_counts: list[tuple[int, int, list[PeerConnection]]] = []
 
+        async with self._peers_lock:
+            peers_snapshot = list(self.peers)
+        
+        async with self._requested_pieces_lock:
+            requested_pieces_snapshot = set(self.requested_pieces)
+        
+        async with self.torrent_storage._downloaded_pieces_lock:
+            downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
+
         for idx in range(self.total_piece_count):
-            if self._has_piece(self.bitfield, idx) or idx in self.requested_pieces or idx in self.torrent_storage.downloaded_pieces:
+            if self._has_piece(self.bitfield, idx) or idx in requested_pieces_snapshot or idx in downloaded_pieces_snapshot:
                 continue
 
             count = 0
             peers_with_piece = []
-            for peer in self.peers:
+            for peer in peers_snapshot:
                 if peer.choked or not peer.bitfield:
                     continue
                 if self._has_piece(peer.bitfield, idx):

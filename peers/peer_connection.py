@@ -1,6 +1,7 @@
 import asyncio
 import struct
-from typing import Optional
+from typing import Optional, Callable, Awaitable
+import fcntl
 
 
 class PeerConnection:
@@ -30,6 +31,11 @@ class PeerConnection:
         self.bitfield: Optional[bytes] = None
         self.choked = True
         self.interested = False
+        self._message_loop_task: Optional[asyncio.Task] = None
+        self._incoming_pieces: asyncio.Queue = asyncio.Queue()
+        self.request_handler: Optional[Callable[["PeerConnection", int, int, int], Awaitable[None]]] = None
+        self._choked_lock = asyncio.Lock()
+        self._interested_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         if self.reader is None or self.writer is None:
@@ -106,19 +112,23 @@ class PeerConnection:
         return message[0], message[1:]
 
     async def send_interested(self) -> None:
-        self.interested = True
+        async with self._interested_lock:
+            self.interested = True
         await self.send_message(self.MESSAGE_INTERESTED)
 
     async def send_not_interested(self) -> None:
-        self.interested = False
+        async with self._interested_lock:
+            self.interested = False
         await self.send_message(self.MESSAGE_NOT_INTERESTED)
 
     async def send_choke(self) -> None:
-        self.choked = True
+        async with self._choked_lock:
+            self.choked = True
         await self.send_message(self.MESSAGE_CHOKE)
 
     async def send_unchoke(self) -> None:
-        self.choked = False
+        async with self._choked_lock:
+            self.choked = False
         await self.send_message(self.MESSAGE_UNCHOKE)
 
     async def send_have(self, piece_index: int) -> None:
@@ -193,17 +203,31 @@ class PeerConnection:
     def set_request_handler(self, handler: Callable[["PeerConnection", int, int, int], Awaitable[None]]) -> None:
         self.request_handler = handler
 
+    async def is_choked(self) -> bool:
+        """Thread-safe check if peer is choked."""
+        async with self._choked_lock:
+            return self.choked
+    
+    async def is_interested(self) -> bool:
+        """Thread-safe check if we are interested."""
+        async with self._interested_lock:
+            return self.interested
+
     async def _on_choke(self, payload: bytes) -> None:
-        self.choked = True
+        async with self._choked_lock:
+            self.choked = True
 
     async def _on_unchoke(self, payload: bytes) -> None:
-        self.choked = False
+        async with self._choked_lock:
+            self.choked = False
 
     async def _on_interested(self, payload: bytes) -> None:
-        self.interested = True
+        async with self._interested_lock:
+            self.interested = True
 
     async def _on_not_interested(self, payload: bytes) -> None:
-        self.interested = False
+        async with self._interested_lock:
+            self.interested = False
 
     async def _on_have(self, payload: bytes) -> int:
         if len(payload) != 4:
@@ -247,3 +271,12 @@ class PeerConnection:
         if self.writer is None:
             raise ConnectionError("not connected to peer")
         await asyncio.wait_for(self.writer.drain(), timeout=self.CONNECTION_TIMEOUT)
+
+    async def read_block(self) -> tuple[int, int, bytes]:
+        """Read a piece block from the incoming pieces queue."""
+        return await self._incoming_pieces.get()
+
+    async def send_piece(self, piece_index: int, begin: int, data: bytes) -> None:
+        """Send a piece block to the peer."""
+        payload = struct.pack(">II", piece_index, begin) + data
+        await self.send_message(self.MESSAGE_PIECE, payload)

@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Optional
+import asyncio
+import fcntl
 from .piece import Piece
 from .peer_connection import PeerConnection
 
@@ -19,6 +21,7 @@ class TorrentStorage:
         self.total_piece_count = total_piece_count
         self.base_path = Path(base_path)
         self.downloaded_pieces: dict[int, Piece] = {}
+        self._downloaded_pieces_lock = asyncio.Lock()
         
         self.files = files or [("download", piece_length * total_piece_count)] #  if no files given assume single file with total length
         self._build_file_offset_map()
@@ -72,10 +75,15 @@ class TorrentStorage:
             mode = 'rb+' if file_path.exists() else 'wb'
             
             with open(file_path, mode) as f:
-                f.seek(file_offset)
-                chunk = data[bytes_written:bytes_written + bytes_count]
-                f.write(chunk)
-                bytes_written += bytes_count
+                # File locking to prevent concurrent writes
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.seek(file_offset)
+                    chunk = data[bytes_written:bytes_written + bytes_count]
+                    f.write(chunk)
+                    bytes_written += bytes_count
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
         return True
     
@@ -100,13 +108,25 @@ class TorrentStorage:
                 return None
             
             with open(file_path, 'rb') as f:
-                f.seek(file_offset)
-                chunk = f.read(bytes_count)
-                if len(chunk) < bytes_count:
-                    return None  # File doesn't have enough data
-                piece_data.extend(chunk)
+                # File locking to prevent reading while writing
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    f.seek(file_offset)
+                    chunk = f.read(bytes_count)
+                    if len(chunk) < bytes_count:
+                        return None  # File doesn't have enough data
+                    piece_data.extend(chunk)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
         return bytes(piece_data) if piece_data else None
+    
+    def read_piece_bytes(self, piece_index: int, begin: int, length: int) -> Optional[bytes]:
+        """Read a portion of a piece from disk."""
+        piece_data = self._read_piece_from_disk(piece_index)
+        if piece_data is None:
+            return None
+        return piece_data[begin:begin + length]
         
         
     
