@@ -105,14 +105,6 @@ class PeerConnection:
         message = await self._read_exactly(message_length)
         return message[0], message[1:]
 
-    async def read_bitfield(self) -> bytes:
-        message_id, payload = await self.read_message()
-        if message_id != self.MESSAGE_BITFIELD:
-            raise ValueError("expected bitfield message")
-
-        self.bitfield = payload
-        return payload
-
     async def send_interested(self) -> None:
         self.interested = True
         await self.send_message(self.MESSAGE_INTERESTED)
@@ -137,23 +129,114 @@ class PeerConnection:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_REQUEST, payload)
 
-   
     async def cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
-    async def read_block(self) -> tuple[int, int, bytes]:
+    async def read_and_dispatch_message(self) -> tuple[Optional[int], Optional[object]]:
+        """Read a message and call the appropriate handler based on message id.
+
+        Returns a tuple of (message_id, handler_result). If the message is a keep-alive
+        (length 0) this returns (None, None).
+        """
         message_id, payload = await self.read_message()
-        if message_id != self.MESSAGE_PIECE:
-            raise ValueError("expected piece message")
+        if message_id is None:
+            return None, None
+
+        handler_map = {
+            self.MESSAGE_CHOKE: self._on_choke,
+            self.MESSAGE_UNCHOKE: self._on_unchoke,
+            self.MESSAGE_INTERESTED: self._on_interested,
+            self.MESSAGE_NOT_INTERESTED: self._on_not_interested,
+            self.MESSAGE_HAVE: self._on_have,
+            self.MESSAGE_BITFIELD: self._on_bitfield,
+            self.MESSAGE_REQUEST: self._on_request,
+            self.MESSAGE_PIECE: self._on_piece,
+            self.MESSAGE_CANCEL: self._on_cancel,
+        }
+
+        handler = handler_map.get(message_id, self._on_unknown)
+        result = await handler(payload)
+        return message_id, result
+
+    async def start_message_loop(self) -> None:
+        if self._message_loop_task is not None and not self._message_loop_task.done():
+            return
+        self._message_loop_task = asyncio.create_task(self._message_loop())
+
+    async def _message_loop(self) -> None:
+        try:
+            while True:
+                message_id, parsed = await self.read_and_dispatch_message()
+                if message_id is None:# keep-alive, ignore
+                    continue
+
+                if message_id == self.MESSAGE_PIECE:
+                    # parsed is (piece_index, begin, block)
+                    await self._incoming_pieces.put(parsed)
+                elif message_id == self.MESSAGE_REQUEST:
+                    # parsed is (piece_index, begin, length)
+                    if self.request_handler is not None:
+                        # fire-and-forget to avoid blocking loop on slow handlers
+                        asyncio.create_task(self.request_handler(self, *parsed))
+                elif message_id == self.MESSAGE_BITFIELD:
+                    # parsed already set bitfield in handler
+                    pass
+                elif message_id == self.MESSAGE_HAVE:
+                    # parsed is piece_index
+                    pass
+                # other message types already updated internal state in handlers
+        except Exception:
+            # connection closed or read error — exit loop
+            return
+
+    def set_request_handler(self, handler: Callable[["PeerConnection", int, int, int], Awaitable[None]]) -> None:
+        self.request_handler = handler
+
+    async def _on_choke(self, payload: bytes) -> None:
+        self.choked = True
+
+    async def _on_unchoke(self, payload: bytes) -> None:
+        self.choked = False
+
+    async def _on_interested(self, payload: bytes) -> None:
+        self.interested = True
+
+    async def _on_not_interested(self, payload: bytes) -> None:
+        self.interested = False
+
+    async def _on_have(self, payload: bytes) -> int:
+        if len(payload) != 4:
+            raise ValueError("invalid have payload")
+        (piece_index,) = struct.unpack(">I", payload)
+        return piece_index
+
+    async def _on_bitfield(self, payload: bytes) -> bytes:
+        self.bitfield = payload
+        return payload
+
+    async def _on_request(self, payload: bytes) -> tuple[int, int, int]:
+        if len(payload) != 12:
+            raise ValueError("invalid request payload")
+        piece_index, begin, length = struct.unpack(">III", payload)
+        return piece_index, begin, length
+
+    async def _on_piece(self, payload: bytes) -> tuple[int, int, bytes]:
         if len(payload) < 8:
             raise ValueError("invalid piece payload")
-
         piece_index, begin = struct.unpack(">II", payload[:8])
         block = payload[8:]
         return piece_index, begin, block
-    
-    
+
+    async def _on_cancel(self, payload: bytes) -> tuple[int, int, int]:
+        if len(payload) != 12:
+            raise ValueError("invalid cancel payload")
+        piece_index, begin, length = struct.unpack(">III", payload)
+        return piece_index, begin, length
+
+    async def _on_unknown(self, payload: bytes) -> bytes:
+        return payload
+      
     #wrap them with timeout to prevent hanging if the peer is unresponsive
     async def _read_exactly(self, size: int) -> bytes:
         if self.reader is None:

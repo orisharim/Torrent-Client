@@ -11,18 +11,16 @@ from peers.torrent_storage import TorrentStorage
 
 
 class PieceManager:
-    PIECES_AT_ONCE = 5
     CONNECTION_TIMEOUT = 10.0
     BLOCK_DOWNLOAD_TIMEOUT = 10.0
+    RECEIVE_BITFIELD_TIMEOUT = 1.0
+    
+    MAX_IN_FLIGHT_PIECES = 5
+    
     MAX_IN_FLIGHT_BLOCKS = 6
     MAX_BLOCK_RETRIES = 3
 
-    def __init__(
-        self,
-        peer_id: bytes,
-        peers_info: list[tuple[str, int]],
-        torrent_metadata,
-    ) -> None:
+    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata,) -> None:
         self.peers: list[PeerConnection] = []
         for ip, port in peers_info:
             self.peers.append(PeerConnection(ip, port, torrent_metadata.info_hash, peer_id))
@@ -44,15 +42,11 @@ class PieceManager:
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
         self.peers = []
         for ip, port in peers_info:
-            self.peers.append(
-                PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id)
-            )
+            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]) -> None:
         for ip, port in new_peers_info:
-            self.peers.append(
-                PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id)
-            )
+            self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
 
     async def connect_to_unconnected_peers(self) -> None:
         async with TaskGroup() as tg:
@@ -76,15 +70,18 @@ class PieceManager:
             async with asyncio.timeout(self.CONNECTION_TIMEOUT):
                 await peer.connect()
                 await peer.send_handshake()
-                await peer.read_bitfield()
+                await peer.start_message_loop()
+                while peer.bitfield is None: # wait for bitfield
+                    await asyncio.sleep(self.RECEIVE_BITFIELD_TIMEOUT)
+                peer.set_request_handler(self._handle_peer_request)
 
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
 
     async def close_all(self) -> None:
         for peer in self.peers:
-            await peer.close()
-
+            await peer.close()        
+    
     async def pause_downloads(self) -> None:
         self.paused = True
         for peer in self.peers:
@@ -98,7 +95,7 @@ class PieceManager:
         if self.paused:
             return
         async with TaskGroup() as tg:
-            for _ in range(self.PIECES_AT_ONCE):
+            for _ in range(self.MAX_IN_FLIGHT_PIECES):
                 tg.create_task(self._download_piece())
 
     async def _download_piece(self) -> Optional[Piece]:
@@ -112,17 +109,10 @@ class PieceManager:
             if self.paused:
                 return None
 
-            candidate_peers = [
-                selected_peer,
-                *[
-                    peer
-                    for peer in self.peers
-                    if peer is not selected_peer
-                    and peer.bitfield is not None
-                    and not peer.choked
-                    and self._has_piece(peer.bitfield, piece_index)
-                ],
-            ]
+            candidate_peers = [selected_peer]
+            for peer in self.peers:
+                if peer is not selected_peer and peer.bitfield is not None and not peer.choked and self._has_piece(peer.bitfield, piece_index):
+                    candidate_peers.append(peer)
 
             for peer in candidate_peers:
                 if self.paused:
@@ -287,3 +277,24 @@ class PieceManager:
             return default_piece_length
 
         return last_piece_length
+
+    async def _handle_peer_request(self, peer: PeerConnection, piece_index: int, begin: int, length: int) -> None:
+        if piece_index < 0 or piece_index >= self.total_piece_count:
+            return
+
+        piece_length = self._get_piece_length(piece_index)
+        if begin < 0 or begin >= piece_length:
+            return
+
+        if length <= 0:
+            return
+        read_length = min(length, piece_length - begin)
+
+        data = self.torrent_storage.read_piece_bytes(piece_index, begin, read_length)
+        if data is None:
+            return
+
+        if peer.choked:
+            return
+
+        await peer.send_piece(piece_index, begin, data)
