@@ -61,9 +61,10 @@ class TorrentStorage:
         
         return spans
     
-    def add_piece(self, piece_index: int, piece: Piece) -> None:
+    async def add_piece(self, piece_index: int, piece: Piece) -> None:
         if self._write_piece_to_disk(piece_index, piece.get_assembled_data()):
-            self.downloaded_pieces[piece_index] = piece
+            async with self._downloaded_pieces_lock:
+                self.downloaded_pieces[piece_index] = piece
     
     def _write_piece_to_disk(self, piece_index: int, data: bytes) -> bool:
         file_spans = self._get_file_spans_for_piece(piece_index)
@@ -87,7 +88,7 @@ class TorrentStorage:
         
         return True
     
-    def restore_pieces_from_disk(self) -> None:
+    async def restore_pieces_from_disk(self) -> None:
         """Restore existing pieces from disk"""
         for idx in range(self.total_piece_count):
             data = self._read_piece_from_disk(idx)
@@ -97,7 +98,8 @@ class TorrentStorage:
                     block = data[i:i + PeerConnection.DEFAULT_BLOCK_LENGTH]
                     blocks.append((idx, i, block))
                 piece = Piece(blocks)
-                self.downloaded_pieces[idx] = piece
+                async with self._downloaded_pieces_lock:
+                    self.downloaded_pieces[idx] = piece
     
     def _read_piece_from_disk(self, piece_index: int) -> Optional[bytes]:
         file_spans = self._get_file_spans_for_piece(piece_index)

@@ -36,6 +36,8 @@ class PeerConnection:
         self.request_handler: Optional[Callable[["PeerConnection", int, int, int], Awaitable[None]]] = None
         self._choked_lock = asyncio.Lock()
         self._interested_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
+        self._bitfield_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         if self.reader is None or self.writer is None:
@@ -71,8 +73,9 @@ class PeerConnection:
             self.info_hash,
             self.peer_id,
         )
-        self.writer.write(handshake)
-        await self._drain()
+        async with self._write_lock:
+            self.writer.write(handshake)
+            await self._drain()
 
         response = await self._read_exactly(68)
         pstrlen, protocol_name, _reserved, info_hash, peer_id = struct.unpack(
@@ -91,16 +94,16 @@ class PeerConnection:
         await self.connect()
         if self.writer is None:
             raise ConnectionError("not connected to peer")
-
         if message_id is None:
             packet = struct.pack(">I", 0)
         else:
             packet = struct.pack(">IB", len(payload) + 1, message_id) + payload
 
-        self.writer.write(packet)
-        await self._drain()
+        async with self._write_lock:
+            self.writer.write(packet)
+            await self._drain()
 
-    async def read_message(self) -> tuple[Optional[int], bytes]:
+    async def _read_raw_message(self) -> tuple[Optional[int], bytes]:
         await self.connect()
 
         length_prefix = await self._read_exactly(4)
@@ -143,13 +146,13 @@ class PeerConnection:
         payload = struct.pack(">III", piece_index, begin, length)
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
-    async def read_and_dispatch_message(self) -> tuple[Optional[int], Optional[object]]:
+    async def read_message(self) -> tuple[Optional[int], Optional[object]]:
         """Read a message and call the appropriate handler based on message id.
 
         Returns a tuple of (message_id, handler_result). If the message is a keep-alive
         (length 0) this returns (None, None).
         """
-        message_id, payload = await self.read_message()
+        message_id, payload = await self._read_raw_message()
         if message_id is None:
             return None, None
 
@@ -174,10 +177,16 @@ class PeerConnection:
             return
         self._message_loop_task = asyncio.create_task(self._message_loop())
 
+    async def stop_message_loop(self) -> None:
+        if self._message_loop_task is not None:
+            self._message_loop_task.cancel()
+            self._message_loop_task = None
+            
+    
     async def _message_loop(self) -> None:
         try:
             while True:
-                message_id, parsed = await self.read_and_dispatch_message()
+                message_id, parsed = await self.read_message()
                 if message_id is None:# keep-alive, ignore
                     continue
 
@@ -236,8 +245,13 @@ class PeerConnection:
         return piece_index
 
     async def _on_bitfield(self, payload: bytes) -> bytes:
-        self.bitfield = payload
+        async with self._bitfield_lock:
+            self.bitfield = payload
         return payload
+
+    async def get_bitfield(self) -> Optional[bytes]:
+        async with self._bitfield_lock:
+            return self.bitfield
 
     async def _on_request(self, payload: bytes) -> tuple[int, int, int]:
         if len(payload) != 12:

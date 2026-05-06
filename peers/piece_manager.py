@@ -3,6 +3,7 @@ from collections import deque
 from asyncio import TaskGroup
 from hashlib import sha1
 import random
+import time
 from typing import Optional
 
 from peers.peer_connection import PeerConnection
@@ -12,8 +13,10 @@ from peers.torrent_storage import TorrentStorage
 
 class PieceManager:
     CONNECTION_TIMEOUT = 10.0
+    RECEIVE_BITFIELD_CHECK_INTERVAL = 1.0
+    
     BLOCK_DOWNLOAD_TIMEOUT = 10.0
-    RECEIVE_BITFIELD_TIMEOUT = 1.0
+
     
     MAX_IN_FLIGHT_PIECES = 5
     
@@ -33,6 +36,7 @@ class PieceManager:
         self.requested_pieces: set[int] = set()
         self._requested_pieces_lock = asyncio.Lock()
         self._peers_lock = asyncio.Lock()
+        self._bitfield_lock = asyncio.Lock()
 
         self.torrent_storage = TorrentStorage(
             piece_length=torrent_metadata.piece_length,
@@ -57,8 +61,8 @@ class PieceManager:
             peers_snapshot = list(self.peers)
         async with TaskGroup() as tg:
             for peer in peers_snapshot:
-                # Connect only when a peer has not completed bitfield exchange yet.
-                if peer.bitfield is not None:
+                #connect only when a peer has not completed bitfield exchange yet
+                if await peer.get_bitfield() is not None:
                     continue
                 tg.create_task(self._connect_to_peer(peer))
 
@@ -72,17 +76,17 @@ class PieceManager:
                 tg.create_task(self._connect_to_peer(peer))
 
     async def _connect_to_peer(self, peer: PeerConnection) -> None:
-        if peer.bitfield is not None:
+        if await peer.get_bitfield() is not None:
             return
         try:
             async with asyncio.timeout(self.CONNECTION_TIMEOUT):
                 await peer.connect()
                 await peer.send_handshake()
                 await peer.start_message_loop()
-                while peer.bitfield is None: # wait for bitfield
-                    await asyncio.sleep(self.RECEIVE_BITFIELD_TIMEOUT)
+                while (await peer.get_bitfield()) is None: # wait for bitfield
+                    await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
                 peer.set_request_handler(self._handle_peer_request)
-
+        
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
 
@@ -111,13 +115,11 @@ class PieceManager:
                 tg.create_task(self._download_piece())
 
     async def _download_piece(self) -> Optional[Piece]:
-        next_piece = await self._get_next_piece_index()
+        next_piece = await self._reserve_next_piece_index()
         if next_piece is None:
             return None
 
         piece_index, selected_peer = next_piece
-        async with self._requested_pieces_lock:
-            self.requested_pieces.add(piece_index)
         try:
             if self.paused:
                 return None
@@ -126,8 +128,16 @@ class PieceManager:
             async with self._peers_lock:
                 peers_snapshot = list(self.peers)
             for peer in peers_snapshot:
-                if peer is not selected_peer and peer.bitfield is not None and not peer.choked and self._has_piece(peer.bitfield, piece_index):
-                    candidate_peers.append(peer)
+                if peer is selected_peer:
+                    continue
+                peer_bitfield = await peer.get_bitfield()
+                if (
+                    peer_bitfield is None
+                ):
+                    continue
+                if not await peer.is_choked():
+                    if self._has_piece(peer_bitfield, piece_index):
+                        candidate_peers.append(peer)
 
             for peer in candidate_peers:
                 if self.paused:
@@ -142,10 +152,10 @@ class PieceManager:
                 self.requested_pieces.discard(piece_index)
 
     async def _download_piece_from_peer(self, piece_index: int, peer: PeerConnection) -> Optional[Piece]:
-        if peer.choked:
+        if await peer.is_choked():
             return None
 
-        if not peer.interested:
+        if not await peer.is_interested():
             await peer.send_interested()
 
         piece_length = self._get_piece_length(piece_index)
@@ -209,7 +219,7 @@ class PieceManager:
 
             received[block_begin] = block
 
-        ordered_blocks: list[tuple[int, int, bytes]]
+        ordered_blocks: list[tuple[int, int, bytes]] = []
         for begin in sorted(received.keys()):
             ordered_blocks.append((piece_index, begin, received[begin]))
        
@@ -217,53 +227,56 @@ class PieceManager:
         if not self._validate_piece(piece_index, piece):
             return None
 
-        self.torrent_storage.add_piece(piece_index, piece)
+        await self.torrent_storage.add_piece(piece_index, piece)
+        async with self._bitfield_lock:
+            self.bitfield = self._set_piece_in_bitfield(self.bitfield, piece_index)
         return piece
 
-    async def _get_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
+    async def _reserve_next_piece_index(self) -> Optional[tuple[int, PeerConnection]]:
         pieces_counts: list[tuple[int, int, list[PeerConnection]]] = []
 
         async with self._peers_lock:
             peers_snapshot = list(self.peers)
-        
-        async with self._requested_pieces_lock:
-            requested_pieces_snapshot = set(self.requested_pieces)
-        
         async with self.torrent_storage._downloaded_pieces_lock:
             downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
 
-        for idx in range(self.total_piece_count):
-            if self._has_piece(self.bitfield, idx) or idx in requested_pieces_snapshot or idx in downloaded_pieces_snapshot:
-                continue
-
-            count = 0
-            peers_with_piece = []
-            for peer in peers_snapshot:
-                if peer.choked or not peer.bitfield:
+        async with self._requested_pieces_lock:
+            async with self._bitfield_lock:
+                our_bitfield_snapshot = self.bitfield
+            for idx in range(self.total_piece_count):
+                if self._has_piece(our_bitfield_snapshot, idx) or idx in self.requested_pieces or idx in downloaded_pieces_snapshot:
                     continue
-                if self._has_piece(peer.bitfield, idx):
-                    count += 1
-                    peers_with_piece.append(peer)
 
-            if count > 0:
-                pieces_counts.append((idx, count, peers_with_piece))
+                count = 0
+                peers_with_piece = []
+                for peer in peers_snapshot:
+                    peer_bitfield = await peer.get_bitfield()
+                    if not peer_bitfield:
+                        continue
+                    if self._has_piece(peer_bitfield, idx):
+                        count += 1
+                        peers_with_piece.append(peer)
 
-        if not pieces_counts:
-            return None
+                if count > 0:
+                    pieces_counts.append((idx, count, peers_with_piece))
 
-        min_count = pieces_counts[0][1]
-        for _, count, _ in pieces_counts:
-            if count < min_count:
-                min_count = count
+            if not pieces_counts:
+                return None
 
-        rarest_pieces: list[tuple[int, list[PeerConnection]]] = []
-        for idx, count, peer_connections in pieces_counts:
-            if min_count == count:
-                rarest_pieces.append((idx, peer_connections))
+            min_count = pieces_counts[0][1]
+            for _, count, _ in pieces_counts:
+                if count < min_count:
+                    min_count = count
 
-        chosen_piece = random.choice(rarest_pieces)
-        chosen_peer = random.choice(chosen_piece[1])
-        return chosen_piece[0], chosen_peer
+            rarest_pieces: list[tuple[int, list[PeerConnection]]] = []
+            for idx, count, peer_connections in pieces_counts:
+                if min_count == count:
+                    rarest_pieces.append((idx, peer_connections))
+
+            chosen_piece = random.choice(rarest_pieces)
+            chosen_peer = random.choice(chosen_piece[1])
+            self.requested_pieces.add(chosen_piece[0])
+            return chosen_piece[0], chosen_peer
 
     # takes a bitfield and a piece idx and returns whether the bitfield indicates
     # that the piece is there (works for us or for remote peers)
@@ -275,6 +288,20 @@ class PieceManager:
         bit_offset = piece_index % 8
         mask = 1 << (7 - bit_offset)
         return (bitfield[byte_index] & mask) != 0
+    
+    def _set_piece_in_bitfield(self, bitfield: bytes, piece_index: int) -> bytes:
+        byte_index = piece_index // 8
+        bit_offset = piece_index % 8
+        mask = 1 << (7 - bit_offset)
+
+        if byte_index >= len(bitfield):
+            bitfield += b'\x00' * (byte_index - len(bitfield) + 1)
+
+        return (
+            bitfield[:byte_index] +
+            bytes([bitfield[byte_index] | mask]) +
+            bitfield[byte_index + 1:]
+        )
 
     def _validate_piece(self, piece_index: int, piece: Piece) -> bool:
         assembled_piece = piece.get_assembled_data()
@@ -321,7 +348,7 @@ class PieceManager:
         if data is None:
             return
 
-        if peer.choked:
+        if await peer.is_choked():
             return
 
         await peer.send_piece(piece_index, begin, data)
