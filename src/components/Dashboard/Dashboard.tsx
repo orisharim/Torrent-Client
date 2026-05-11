@@ -2,35 +2,35 @@ import React from "react";
 import { Grid } from "./Grid";
 import Toolbar from "../ToolBar/Toolbar";
 import { HomePage } from "../Views/HomePage";
-import {TorrentPage} from "../Views/TorrentPage";
+import { TorrentPage } from "../Views/TorrentPage";
 import { FeedsPage } from "../Views/FeedsPage";
 import { DevicePage } from "../Views/DevicePage";
 import { SettingsPage } from "../Views/SettingsPage";
+import Tabs from "../Sidebar/Tabs";
 
 type DashboardProps = {
   page: string;
+  setPage: React.Dispatch<React.SetStateAction<string>>;
 };
 
-export const Dashboard = ({ page }: DashboardProps) => {
+export const Dashboard = ({ page, setPage }: DashboardProps) => {
   return (
-    
-    <div className="bg-stone-50 sticky top-0 h-[200vh] w-full">
+    <div className="bg-stone-50 min-h-screen w-full">
+      <Toolbar />
 
-        <Toolbar/>
-        <Grid/>
-      {page === "home" && <HomePage/>}
+      <Grid />
 
-      {page === "torrent" && <TorrentPage/>}
+      <Tabs setPage={setPage} page={page} />
 
-      {page === "network" && <FeedsPage/>}
+      {page === "home" && <HomePage />}
 
-      {page === "devices" && <DevicePage/>}
-       
-      {page === "settings" && <SettingsPage/> }
+      {page === "torrent" && <TorrentPage />}
 
+      {page === "network" && <FeedsPage />}
+
+      {page === "devices" && <DevicePage />}
+
+      {page === "settings" && <SettingsPage />}
     </div>
-
-
   );
 };
-
