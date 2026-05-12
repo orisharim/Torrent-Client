@@ -6,7 +6,7 @@ import { TorrentPage } from "../Views/TorrentPage";
 import { FeedsPage } from "../Views/FeedsPage";
 import { DevicePage } from "../Views/DevicePage";
 import { SettingsPage } from "../Views/SettingsPage";
-import Tabs from "../Sidebar/Tabs";
+import Tabs from "./Tabs";
 
 type DashboardProps = {
   page: string;
@@ -15,7 +15,7 @@ type DashboardProps = {
 
 export const Dashboard = ({ page, setPage }: DashboardProps) => {
   return (
-    <div className="bg-stone-50 min-h-screen w-full">
+    <div className="bg-stone-50 dark:bg-stone-900 min-h-screen w-full">
       <Toolbar />
 
       <Grid />
@@ -30,7 +30,7 @@ export const Dashboard = ({ page, setPage }: DashboardProps) => {
 
       {page === "devices" && <DevicePage />}
 
-      {page === "settings" && <SettingsPage />}
+      {page === "settings" && <SettingsPage onClose={() => setPage("home")} />}
     </div>
   );
 };
