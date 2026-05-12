@@ -1,8 +1,9 @@
 import asyncio
 import struct
-from typing import Optional, Callable, Awaitable
+from typing import Optional
 import fcntl
 
+from peers.torrent_storage import TorrentStorage
 
 class PeerConnection:
     PROTOCOL_NAME = b"BitTorrent protocol"
@@ -20,11 +21,12 @@ class PeerConnection:
     MESSAGE_PIECE = 7
     MESSAGE_CANCEL = 8
 
-    def __init__(self, host: str, port: int, info_hash: bytes, peer_id: bytes) -> None:
+    def __init__(self, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> None:
         self.host = host
         self.port = port
         self.info_hash = info_hash
         self.peer_id = peer_id
+        self.storage = storage
         self.reader = None
         self.writer = None
         self.remote_peer_id: Optional[bytes] = None
@@ -33,7 +35,6 @@ class PeerConnection:
         self.interested = False
         self._message_loop_task: Optional[asyncio.Task] = None
         self._incoming_pieces: asyncio.Queue = asyncio.Queue()
-        self.request_handler: Optional[Callable[["PeerConnection", int, int, int], Awaitable[None]]] = None
         self._choked_lock = asyncio.Lock()
         self._interested_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
@@ -101,18 +102,7 @@ class PeerConnection:
 
         async with self._write_lock:
             self.writer.write(packet)
-            await self._drain()
-
-    async def _read_raw_message(self) -> tuple[Optional[int], bytes]:
-        await self.connect()
-
-        length_prefix = await self._read_exactly(4)
-        (message_length,) = struct.unpack(">I", length_prefix)
-        if message_length == 0:
-            return None, b""
-
-        message = await self._read_exactly(message_length)
-        return message[0], message[1:]
+            await self._drain()       
 
     async def send_interested(self) -> None:
         async with self._interested_lock:
@@ -147,15 +137,21 @@ class PeerConnection:
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
     async def read_message(self) -> tuple[Optional[int], Optional[object]]:
-        """Read a message and call the appropriate handler based on message id.
+        await self.connect()
 
-        Returns a tuple of (message_id, handler_result). If the message is a keep-alive
-        (length 0) this returns (None, None).
-        """
-        message_id, payload = await self._read_raw_message()
-        if message_id is None:
+        length_prefix = await self._read_exactly(4)
+        (message_length,) = struct.unpack(">I", length_prefix)
+        if message_length == 0:
             return None, None
 
+        message = await self._read_exactly(message_length)
+        
+        if message is None or len(message) == 0:
+            return None, None
+        
+        message_id = message[0]
+        payload = message[1:]
+        
         handler_map = {
             self.MESSAGE_CHOKE: self._on_choke,
             self.MESSAGE_UNCHOKE: self._on_unchoke,
@@ -182,43 +178,48 @@ class PeerConnection:
             self._message_loop_task.cancel()
             self._message_loop_task = None
             
-    
     async def _message_loop(self) -> None:
         try:
             while True:
                 message_id, parsed = await self.read_message()
-                if message_id is None:# keep-alive, ignore
+                if message_id is None:
                     continue
-
                 if message_id == self.MESSAGE_PIECE:
                     # parsed is (piece_index, begin, block)
                     await self._incoming_pieces.put(parsed)
                 elif message_id == self.MESSAGE_REQUEST:
                     # parsed is (piece_index, begin, length)
-                    if self.request_handler is not None:
-                        # fire-and-forget to avoid blocking loop on slow handlers
-                        asyncio.create_task(self.request_handler(self, *parsed))
+                    asyncio.create_task(self._send_piece(*parsed))
                 elif message_id == self.MESSAGE_BITFIELD:
-                    # parsed already set bitfield in handler
                     pass
                 elif message_id == self.MESSAGE_HAVE:
                     # parsed is piece_index
                     pass
-                # other message types already updated internal state in handlers
         except Exception:
-            # connection closed or read error — exit loop
             return
 
-    def set_request_handler(self, handler: Callable[["PeerConnection", int, int, int], Awaitable[None]]) -> None:
-        self.request_handler = handler
+    async def _send_piece(self, piece_index: int, begin: int, length: int) -> None:
+        if piece_index < 0 or piece_index >= self.storage.total_piece_count:
+            return
+        if begin < 0 or length <= 0:
+            return
+
+        piece_length = self.storage.get_piece_length(piece_index)
+        if begin >= piece_length:
+            return
+
+        read_length = min(length, piece_length - begin)
+        data = self.storage.read_piece_bytes(piece_index, begin, read_length)
+        if data is None:
+            return
+        payload = struct.pack(">II", piece_index, begin) + data
+        await self.send_message(self.MESSAGE_PIECE, payload)        
 
     async def is_choked(self) -> bool:
-        """Thread-safe check if peer is choked."""
         async with self._choked_lock:
             return self.choked
     
     async def is_interested(self) -> bool:
-        """Thread-safe check if we are interested."""
         async with self._interested_lock:
             return self.interested
 
@@ -287,10 +288,6 @@ class PeerConnection:
         await asyncio.wait_for(self.writer.drain(), timeout=self.CONNECTION_TIMEOUT)
 
     async def read_block(self) -> tuple[int, int, bytes]:
-        """Read a piece block from the incoming pieces queue."""
         return await self._incoming_pieces.get()
 
-    async def send_piece(self, piece_index: int, begin: int, data: bytes) -> None:
-        """Send a piece block to the peer."""
-        payload = struct.pack(">II", piece_index, begin) + data
-        await self.send_message(self.MESSAGE_PIECE, payload)
+        

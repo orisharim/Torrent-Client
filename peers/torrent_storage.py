@@ -129,6 +129,16 @@ class TorrentStorage:
         if piece_data is None:
             return None
         return piece_data[begin:begin + length]
+
+    def get_piece_length(self, piece_index: int) -> int:
+        """Return the actual length of a piece, including the final partial piece."""
+        if piece_index < 0 or piece_index >= self.total_piece_count:
+            raise IndexError("piece_index out of range")
+
+        total_length = sum(file_length for _, file_length in self.files)
+        piece_start = piece_index * self.piece_length
+        remaining = total_length - piece_start
+        return min(self.piece_length, max(0, remaining))
         
         
     

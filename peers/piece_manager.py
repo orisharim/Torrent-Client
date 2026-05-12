@@ -24,10 +24,6 @@ class PieceManager:
     MAX_BLOCK_RETRIES = 3
 
     def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata, download_path: str) -> None:
-        self.peers: list[PeerConnection] = []
-        for ip, port in peers_info:
-            self.peers.append(PeerConnection(ip, port, torrent_metadata.info_hash, peer_id))
-
         self.torrent_metadata = torrent_metadata
         self.peer_id = peer_id
         self.total_piece_count = len(torrent_metadata.pieces)
@@ -46,18 +42,22 @@ class PieceManager:
             base_path=download_path,
         )
 
+        self.peers: list[PeerConnection] = []
+        for ip, port in peers_info:
+            self.peers.append(PeerConnection(ip, port, torrent_metadata.info_hash, peer_id, self.torrent_storage))
+
         self.paused = False
 
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
         async with self._peers_lock:
             self.peers = []
             for ip, port in peers_info:
-                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
+                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id, self.torrent_storage))
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]) -> None:
         async with self._peers_lock:
             for ip, port in new_peers_info:
-                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id))
+                self.peers.append(PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id, self.torrent_storage))
 
     async def connect_to_unconnected_peers(self) -> None:
         async with self._peers_lock:
@@ -88,7 +88,6 @@ class PieceManager:
                 await peer.start_message_loop()
                 while (await peer.get_bitfield()) is None: # wait for bitfield
                     await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
-                peer.set_request_handler(self._handle_peer_request)
         
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
@@ -274,8 +273,7 @@ class PieceManager:
             self.requested_pieces.add(chosen_piece)
 
         return chosen_piece
-           
-            
+                    
 
     # takes a bitfield and a piece idx and returns whether the bitfield indicates
     # that the piece is there (works for us or for remote peers)
@@ -331,23 +329,3 @@ class PieceManager:
 
         return last_piece_length
 
-    async def _handle_peer_request(self, peer: PeerConnection, piece_index: int, begin: int, length: int) -> None:
-        if piece_index < 0 or piece_index >= self.total_piece_count:
-            return
-
-        piece_length = self._get_piece_length(piece_index)
-        if begin < 0 or begin >= piece_length:
-            return
-
-        if length <= 0:
-            return
-        read_length = min(length, piece_length - begin)
-
-        data = self.torrent_storage.read_piece_bytes(piece_index, begin, read_length)
-        if data is None:
-            return
-
-        if await peer.is_choked():
-            return
-
-        await peer.send_piece(piece_index, begin, data)
