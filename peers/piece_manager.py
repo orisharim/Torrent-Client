@@ -18,9 +18,9 @@ class PieceManager:
     
     BLOCK_DOWNLOAD_TIMEOUT = 10.0
 
-    MAX_IN_FLIGHT_PIECES = 5
+    MAX_IN_FLIGHT_PIECES_PER_PEER = 5
     
-    MAX_IN_FLIGHT_BLOCKS = 6
+    MAX_IN_FLIGHT_BLOCKS_PER_PIECE = 6
     MAX_BLOCK_RETRIES = 3
 
     def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata, download_path: str) -> None:
@@ -34,6 +34,8 @@ class PieceManager:
         self._requested_pieces_lock = asyncio.Lock()
         self._peers_lock = asyncio.Lock()
         self._bitfield_lock = asyncio.Lock()
+        self._peer_pending_lock = asyncio.Lock()
+        self.peer_pending_pieces: dict[PeerConnection, set[int]] = {}
 
         self.torrent_storage = TorrentStorage(
             piece_length = torrent_metadata.piece_length,
@@ -46,7 +48,7 @@ class PieceManager:
         for ip, port in peers_info:
             self.peers.append(PeerConnection(ip, port, torrent_metadata.info_hash, peer_id, self.torrent_storage))
 
-        self.paused = False
+        self.is_downloading = False
 
     async def set_peers(self, peers_info: list[tuple[str, int]]) -> None:
         async with self._peers_lock:
@@ -99,7 +101,7 @@ class PieceManager:
             await peer.close()        
     
     async def pause_downloads(self) -> None:
-        self.paused = True
+        self.is_downloading = True
         async with self._peers_lock:
             peers_snapshot = list(self.peers)
         for peer in peers_snapshot:
@@ -107,10 +109,10 @@ class PieceManager:
                 await peer.send_not_interested()
 
     async def resume_downloads(self) -> None:
-        self.paused = False
+        self.is_downloading = False
 
     async def _download_piece(self) -> Optional[Piece]:
-        while not self.paused:
+        while not self.is_downloading:
             next_piece_idx = await self._reserve_next_piece()
             if next_piece_idx is None:
                 return None
@@ -129,12 +131,45 @@ class PieceManager:
                         if self._check_bitfield_has_piece(peer_bitfield, next_piece_idx):
                             peers_with_piece.append(peer)
 
+                if not peers_with_piece:
+                    return None
+
+                tried_any = False
                 for peer in peers_with_piece:
-                    if self.paused:
+                    if self.is_downloading:
                         return None
-                    piece = await self._download_piece_from_peer(next_piece_idx, peer)
-                    if piece is not None:
-                        return piece
+
+                    # check and reserve per peer pending pieces
+                    async with self._peer_pending_lock:
+                        pending_set = self.peer_pending_pieces.get(peer)
+                        if pending_set is None:
+                            pending_set = set()
+                            self.peer_pending_pieces[peer] = pending_set
+                        # skip if this peer is already being asked for this piece
+                        if next_piece_idx in pending_set:
+                            continue
+                        # enforce per peer concurrent pieces limit
+                        if len(pending_set) >= self.MAX_IN_FLIGHT_PIECES_PER_PEER:
+                            continue
+                        pending_set.add(next_piece_idx)
+                        tried_any = True
+
+                    try:
+                        piece = await self._download_piece_from_peer(next_piece_idx, peer)
+                        if piece is not None:
+                            return piece
+                    finally:
+                        async with self._peer_pending_lock:
+                            s = self.peer_pending_pieces.get(peer)
+                            if s:
+                                s.discard(next_piece_idx)
+                                if not s:
+                                    # avoid growth of the dict
+                                    del self.peer_pending_pieces[peer]
+
+                # if no peer was attempted (all were busy/duplicated), treat as no available peer
+                if not tried_any:
+                    return None
             finally:
                 async with self._requested_pieces_lock:
                     self.requested_pieces.discard(next_piece_idx)
@@ -147,25 +182,22 @@ class PieceManager:
             await peer.send_interested()
 
         piece_length = self._get_piece_length(piece_index)
-        expected_lengths: dict[int, int] = {}
-        for begin in range(0, piece_length, PeerConnection.DEFAULT_BLOCK_LENGTH):
-            expected_lengths[begin] = min(
-                PeerConnection.DEFAULT_BLOCK_LENGTH,
-                piece_length - begin,
-            )
+        expected_lengths = {
+            begin: min(PeerConnection.DEFAULT_BLOCK_LENGTH, piece_length - begin)
+            for begin in range(0, piece_length, PeerConnection.DEFAULT_BLOCK_LENGTH)
+        }
 
-        pending = deque(expected_lengths.keys())
+        pending = deque(expected_lengths)
         in_flight: set[int] = set()
-        retries: dict[int, int] = {begin: 0 for begin in expected_lengths}
+        retries = {begin: 0 for begin in expected_lengths}
         received: dict[int, bytes] = {}
 
         while len(received) < len(expected_lengths):
-            if self.paused:
+            if self.is_downloading:
                 await peer.send_not_interested()
                 return None
 
-            # request all possible blocks
-            while pending and len(in_flight) < self.MAX_IN_FLIGHT_BLOCKS:
+            while pending and len(in_flight) < self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE:
                 begin = pending.popleft()
                 if begin in received:
                     continue
@@ -175,13 +207,11 @@ class PieceManager:
             if not in_flight:
                 return None
 
-            # receive block
             try:
                 async with asyncio.timeout(self.BLOCK_DOWNLOAD_TIMEOUT):
                     block_index, block_begin, block = await peer.read_block()
             except TimeoutError:
-                # requeue all inflight blocks on timeout to recover from dropped packets
-                timed_out_blocks = list(in_flight)
+                timed_out_blocks = tuple(in_flight)
                 in_flight.clear()
                 for begin in timed_out_blocks:
                     retries[begin] += 1
@@ -192,7 +222,6 @@ class PieceManager:
 
             if block_index != piece_index:
                 continue
-
             if block_begin not in expected_lengths:
                 continue
 
@@ -222,57 +251,58 @@ class PieceManager:
 
     # reserves the next piece to download (rarest first) and return its index
     async def _reserve_next_piece(self) -> Optional[int]:
-        # take snapshots
-        async with self._peers_lock:
-            peers_snapshot = list(self.peers)
-        async with self.torrent_storage._downloaded_pieces_lock:
-            downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
-        async with self._requested_pieces_lock:
-            requested_pieces_snapshot = set(self.requested_pieces)
-        async with self._bitfield_lock:
-            our_bitfield_snapshot = self.bitfield
+        while True:
+            async with self._peers_lock:
+                peers_snapshot = list(self.peers)
+            async with self.torrent_storage._downloaded_pieces_lock:
+                downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
+            async with self._requested_pieces_lock:
+                requested_pieces_snapshot = set(self.requested_pieces)
+            async with self._bitfield_lock:
+                our_bitfield_snapshot = self.bitfield
 
-        # take bitfields of all peers
-        peers_bitfields = {}
-        for peer in peers_snapshot:
-            peer_bitfield = await peer.get_bitfield()
-            if peer_bitfield is not None:
-                peers_bitfields[peer] = peer_bitfield
-        
-        # count how many peers have each piece
-        pieces_counts = {}
-        for idx in range(self.total_piece_count):
-            if self._check_bitfield_has_piece(our_bitfield_snapshot, idx) or idx in requested_pieces_snapshot or idx in downloaded_pieces_snapshot:
-                continue
-
-            count = 0
+            peers_bitfields: dict[PeerConnection, bytes] = {}
             for peer in peers_snapshot:
-                peer_bitfield = peers_bitfields.get(peer)
-                if not peer_bitfield:
+                peer_bitfield = await peer.get_bitfield()
+                if peer_bitfield is not None:
+                    peers_bitfields[peer] = peer_bitfield
+
+            pieces_counts: dict[int, int] = {}
+            for piece_index in range(self.total_piece_count):
+                if self._check_bitfield_has_piece(our_bitfield_snapshot, piece_index):
                     continue
-                if self._check_bitfield_has_piece(peer_bitfield, idx):
-                    count += 1
+                if piece_index in requested_pieces_snapshot:
+                    continue
+                if piece_index in downloaded_pieces_snapshot:
+                    continue
+
+                count = 0
+                for peer in peers_snapshot:
+                    peer_bitfield = peers_bitfields.get(peer)
+                    if peer_bitfield is None:
+                        continue
+                    if self._check_bitfield_has_piece(peer_bitfield, piece_index):
+                        count += 1
+
                 if count > 0:
-                    pieces_counts[idx] = count
+                    pieces_counts[piece_index] = count
 
-        if not pieces_counts:
-            return None
+            if not pieces_counts:
+                return None
 
-        min_count = min(pieces_counts.values())
-        # pick piece randomly between the rarest
-        rarest_pieces = []
-        for idx, count in pieces_counts.items():
-            if min_count == count:
-                rarest_pieces.append(idx)
+            rarest_count = min(pieces_counts.values())
+            rarest_pieces = [
+                piece_index
+                for piece_index, count in pieces_counts.items()
+                if count == rarest_count
+            ]
 
-        chosen_piece = random.choice(rarest_pieces)
-        # reserve the piece
-        async with self._requested_pieces_lock:
-            if chosen_piece in self.requested_pieces:
-                return self._reserve_next_piece() # try again 
-            self.requested_pieces.add(chosen_piece)
-
-        return chosen_piece
+            chosen_piece = random.choice(rarest_pieces)
+            async with self._requested_pieces_lock:
+                if chosen_piece in self.requested_pieces:
+                    continue
+                self.requested_pieces.add(chosen_piece)
+                return chosen_piece
                     
 
     # takes a bitfield and a piece idx and returns whether the bitfield indicates

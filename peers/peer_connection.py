@@ -223,6 +223,9 @@ class PeerConnection:
         async with self._interested_lock:
             return self.interested
 
+    async def is_connected(self) -> bool:
+        return self.reader is not None and self.writer is not None
+
     async def _on_choke(self, payload: bytes) -> None:
         async with self._choked_lock:
             self.choked = True
