@@ -1,6 +1,6 @@
 import asyncio
 import struct
-from typing import Optional
+from typing import Optional, Dict, Tuple
 import fcntl
 
 from peers.torrent_storage import TorrentStorage
@@ -35,6 +35,8 @@ class PeerConnection:
         self.interested = False
         self._message_loop_task: Optional[asyncio.Task] = None
         self._incoming_pieces: asyncio.Queue = asyncio.Queue()
+        self._pending_blocks: Dict[Tuple[int, int], bytes] = {}
+        self._pending_blocks_lock = asyncio.Lock()
         self._choked_lock = asyncio.Lock()
         self._interested_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
@@ -50,8 +52,11 @@ class PeerConnection:
     async def close(self) -> None:
         if self.writer is None:
             return
+        await self.stop_message_loop()
         self.writer.close()
         await self.writer.wait_closed() #make sure the connection is fully closed
+        self.reader = None
+        self.writer = None
 
     #async version of __enter__ and __exit__ ``
     async def __aenter__(self) -> "PeerConnection":
@@ -176,6 +181,12 @@ class PeerConnection:
     async def stop_message_loop(self) -> None:
         if self._message_loop_task is not None:
             self._message_loop_task.cancel()
+            try:
+                await self._message_loop_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
             self._message_loop_task = None
             
     async def _message_loop(self) -> None:
@@ -290,7 +301,25 @@ class PeerConnection:
             raise ConnectionError("not connected to peer")
         await asyncio.wait_for(self.writer.drain(), timeout=self.CONNECTION_TIMEOUT)
 
-    async def read_block(self) -> tuple[int, int, bytes]:
-        return await self._incoming_pieces.get()
+    async def read_block(self, piece_index: int, begin: int, length: int) -> bytes:
+        key = (piece_index, begin)
+        async with self._pending_blocks_lock:
+            if key in self._pending_blocks:
+                return self._pending_blocks.pop(key)
+
+        while True:
+            item = await self._incoming_pieces.get()
+            if item is None:
+                continue
+            try:
+                pi, bgn, block = item
+            except Exception:
+                continue
+
+            if (pi, bgn) == key:
+                return block
+
+            async with self._pending_blocks_lock:
+                self._pending_blocks[(pi, bgn)] = block
 
         

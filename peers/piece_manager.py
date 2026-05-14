@@ -22,65 +22,60 @@ class PieceManager:
     MAX_BLOCK_RETRIES = 3
 
     def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata, download_path: str) -> None:
-        self.torrent_metadata = torrent_metadata
-        self.peer_id = peer_id
-        self.total_piece_count = len(torrent_metadata.pieces)
+        self._torrent_metadata = torrent_metadata
+        self._peer_id = peer_id
+        self._total_piece_count = len(torrent_metadata.pieces)
 
         self.torrent_storage = TorrentStorage(
             piece_length = torrent_metadata.piece_length,
-            total_piece_count = self.total_piece_count,
+            total_piece_count = self._total_piece_count,
             files=torrent_metadata.files,
             base_path=download_path,
         )
 
-        self.peers: list[PeerConnection] = []
-        self.pieces_requested_by_peer: dict[PeerConnection, set[int]] = {}
+        self._peers: list[PeerConnection] = []
+        self._pieces_requested_by_peer: dict[PeerConnection, set[int]] = {}
         for ip, port in peers_info:
             peer = PeerConnection(ip, port, torrent_metadata.info_hash, peer_id, self.torrent_storage)
-            self.peers.append(peer)
-            self.pieces_requested_by_peer[peer] = set()
+            self._peers.append(peer)
+            self._pieces_requested_by_peer[peer] = set()
 
 
-        self.bitfield: bytes = b""  # bitfield of pieces we have
-        self.requested_pieces: set[int] = set()
+        self._bitfield: bytes = b""  # bitfield of pieces we have
+        self._requested_pieces: set[int] = set()
 
-        
-
-        
-        self.is_downloading = True
-        self.is_seeding = True
+        self._is_downloading = False
+        self._is_seeding = False
 
         self._peers_lock = asyncio.Lock()
         self._bitfield_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
         self._pieces_requested_by_peer_lock = asyncio.Lock()
 
-        self.download_tasks: list[asyncio.Task] = []
+        self._download_tasks: list[asyncio.Task] = []
         
-
     async def set_peers(self, peers_info: list[tuple[str, int]]):
         async with self._peers_lock:
-            self.peers = []
-            self.pieces_requested_by_peer = {}
+            self._peers = []
+            self._pieces_requested_by_peer = {}
             for ip, port in peers_info:
-                peer = PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id, self.torrent_storage)
-                self.peers.append(peer)
-                self.pieces_requested_by_peer[peer] = set()
+                peer = PeerConnection(ip, port, self._torrent_metadata.info_hash, self._peer_id, self.torrent_storage)
+                self._peers.append(peer)
+                self._pieces_requested_by_peer[peer] = set()
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]):
         async with self._peers_lock:
             for ip, port in new_peers_info:
-                peer = PeerConnection(ip, port, self.torrent_metadata.info_hash, self.peer_id, self.torrent_storage)
-                self.peers.append(peer)
-                self.pieces_requested_by_peer[peer] = set()
+                peer = PeerConnection(ip, port, self._torrent_metadata.info_hash, self._peer_id, self.torrent_storage)
+                self._peers.append(peer)
+                self._pieces_requested_by_peer[peer] = set()
 
     async def connect_to_unconnected_peers(self) -> None:
         async with self._peers_lock:
-            peers_snapshot = list(self.peers)
+            peers_snapshot = list(self._peers)
         async with TaskGroup() as tg:
             for peer in peers_snapshot:
-                #connect only when a peer has not completed bitfield exchange yet
-                if await peer.get_bitfield() is not None:
+                if await peer.is_connected():
                     continue
                 tg.create_task(self._connect_to_peer(peer))
 
@@ -88,7 +83,7 @@ class PieceManager:
         await self.close_all()
 
         async with self._peers_lock:
-            peers_snapshot = list(self.peers)
+            peers_snapshot = list(self._peers)
         async with asyncio.TaskGroup() as tg:
             for peer in peers_snapshot:
                 tg.create_task(self._connect_to_peer(peer))
@@ -109,47 +104,58 @@ class PieceManager:
 
     async def close_all(self) -> None:
         async with self._peers_lock:
-            peers_snapshot = list(self.peers)
+            peers_snapshot = list(self._peers)
         for peer in peers_snapshot:
             await peer.close()       
 
-    async def pause_downloads(self):
-        self.is_downloading = False
-
-    async def resume_downloads(self):
-        self.is_downloading = True
-        await self.start_downloads()
-
     async def start_downloads(self):
         await self.stop_downloads()
-
+        self._is_downloading = True
         for _ in range(self.MAX_IN_FLIGHT_PIECES):
             task = asyncio.create_task(self._download_piece())
 
+            # make sure that if the task ended its removed
             def _remove_done_task(done_task: asyncio.Task) -> None:
-                if done_task in self.download_tasks:
-                    self.download_tasks.remove(done_task)
+                if done_task in self._download_tasks:
+                    self._download_tasks.remove(done_task)
+                    
 
             task.add_done_callback(_remove_done_task)
-            self.download_tasks.append(task)
+            self._download_tasks.append(task)
 
     async def stop_downloads(self):
-        for task in self.download_tasks:
+        self._is_downloading = False
+        for task in self._download_tasks:
             task.cancel()
-        if self.download_tasks:
-            await asyncio.gather(*self.download_tasks, return_exceptions=True)
-        self.download_tasks.clear()
-  
-    def is_seeding(self) -> bool:
-        return self.is_seeding
+        if self._download_tasks:
+            await asyncio.gather(*self._download_tasks, return_exceptions=True)
+        self._download_tasks.clear()
 
+        async with self._requested_pieces_lock:
+            self._requested_pieces.clear()
+        async with self._pieces_requested_by_peer_lock:
+            for peer in self._pieces_requested_by_peer:
+                self._pieces_requested_by_peer[peer].clear()
+  
+    async def stop_seeding(self):
+        self._is_seeding = False
+    
+    async def start_seeding(self):
+        self._is_seeding = True
+
+    def is_seeding(self) -> bool:
+        return self._is_seeding
+
+    def is_downloading(self) -> bool:
+        return self._is_downloading
+    
     def is_complete(self) -> bool:
-        return self.get_downloaded_piece_count() == self.total_piece_count
+        return self.get_downloaded_piece_count() == self._total_piece_count
     
     def get_downloaded_piece_count(self) -> int:
         count = 0
-        for i in range(self.total_piece_count):
-            if self._check_bitfield_has_piece(self.bitfield, i):
+        for i in range(self._total_piece_count):
+            if self._check_bitfield_has_piece(self._bitfield, i):
                 count += 1
         return count
     
@@ -157,57 +163,67 @@ class PieceManager:
 
     async def _download_piece(self):
         while not self.is_complete():
-            if not self.is_downloading:
+            if not self._is_downloading:
                 return
+            
+            piece_index = None
+            peer = None
+            try:
+                piece_index = await self._select_next_piece()
+                if piece_index is None:
+                    return
 
-            piece_index = await self._select_next_piece()
-            if piece_index is None:
-                return
-        
-            async with self._requested_pieces_lock:    
-                self.requested_pieces.add(piece_index)
-        
-            while True:
-                peer = await self._get_peer_for_piece(piece_index)
-                if peer is None:
-                    await asyncio.sleep(self.CHECK_FOR_AVAILABLE_PEER_INTERVAL)
-                    if not self.is_downloading:
-                        return
-                    continue
+                async with self._requested_pieces_lock:    
+                    self._requested_pieces.add(piece_index)
 
-                async with self._pieces_requested_by_peer_lock:    
-                    self.pieces_requested_by_peer[peer].add(piece_index)
-                
-                
-                piece = await self._download_piece_from_peer(piece_index, peer)
-                if piece is None:
-                    async with self._pieces_requested_by_peer_lock:
-                        self.pieces_requested_by_peer[peer].remove(piece_index)
-                    continue
+                while True:
+                    peer = await self._get_peer_for_piece(piece_index)
+                    if peer is None:
+                        await asyncio.sleep(self.CHECK_FOR_AVAILABLE_PEER_INTERVAL)
+                        if not self._is_downloading:
+                            return
+                        continue
 
-                if await self._validate_piece(piece_index, piece):
-                    async with self._bitfield_lock:
-                        self.bitfield = self._set_piece_in_bitfield(self.bitfield, piece_index)
+                    async with self._pieces_requested_by_peer_lock:    
+                        self._pieces_requested_by_peer[peer].add(piece_index)
+                    
+                    
+                    piece = await self._download_piece_from_peer(piece_index, peer)
+                    if piece is None:
+                        async with self._pieces_requested_by_peer_lock:
+                            self._pieces_requested_by_peer[peer].discard(piece_index)
+                        continue
+
+                    if await self._validate_piece(piece_index, piece):
+                        async with self._bitfield_lock:
+                            self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
+                        async with self._requested_pieces_lock:
+                            self._requested_pieces.discard(piece_index)
+                        async with self._pieces_requested_by_peer_lock:
+                            self._pieces_requested_by_peer[peer].discard(piece_index)
+                        await self.torrent_storage.add_piece(piece_index, piece)
+                        break
+                    else:
+                        async with self._pieces_requested_by_peer_lock:
+                            self._pieces_requested_by_peer[peer].discard(piece_index)
+            finally:
+                if piece_index is not None:
                     async with self._requested_pieces_lock:
-                        self.requested_pieces.remove(piece_index)
+                        self._requested_pieces.discard(piece_index)
+                if peer is not None:
                     async with self._pieces_requested_by_peer_lock:
-                        self.pieces_requested_by_peer[peer].remove(piece_index)
-                    await self.torrent_storage.add_piece(piece_index, piece)
-                    break
-                else:
-                    async with self._pieces_requested_by_peer_lock:
-                        self.pieces_requested_by_peer[peer].remove(piece_index)
-               
+                        self._pieces_requested_by_peer.get(peer, set()).discard(piece_index)
+
     async def _select_next_piece(self) -> Optional[int]:
         while True:
             async with self._peers_lock:
-                peers_snapshot = list(self.peers)
+                peers_snapshot = list(self._peers)
             async with self.torrent_storage._downloaded_pieces_lock:
                 downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
             async with self._requested_pieces_lock:
-                requested_pieces_snapshot = set(self.requested_pieces)
+                requested_pieces_snapshot = set(self._requested_pieces)
             async with self._bitfield_lock:
-                our_bitfield_snapshot = self.bitfield
+                our_bitfield_snapshot = self._bitfield
 
             peers_bitfields: dict[PeerConnection, bytes] = {}
             for peer in peers_snapshot:
@@ -216,7 +232,7 @@ class PieceManager:
                     peers_bitfields[peer] = peer_bitfield
 
             pieces_counts: dict[int, int] = {}
-            for piece_index in range(self.total_piece_count):
+            for piece_index in range(self._total_piece_count):
                 if self._check_bitfield_has_piece(our_bitfield_snapshot, piece_index):
                     continue
                 if piece_index in requested_pieces_snapshot:
@@ -249,18 +265,18 @@ class PieceManager:
             import random
             chosen_piece = random.choice(rarest_pieces)
             async with self._requested_pieces_lock:
-                if chosen_piece in self.requested_pieces:
+                if chosen_piece in self._requested_pieces:
                     continue
-                self.requested_pieces.add(chosen_piece)
                 return chosen_piece
+            return None
             
     async def _get_peer_for_piece(self, piece_index: int) -> Optional[PeerConnection]:
         async with self._peers_lock:
-            peers_snapshot = list(self.peers)
+            peers_snapshot = list(self._peers)
             
         for peer in peers_snapshot:
             bitfield = await peer.get_bitfield()
-            pending = self.pieces_requested_by_peer.get(peer, set())
+            pending = self._pieces_requested_by_peer.get(peer, set())
             if (
                 bitfield is not None
                 and self._check_bitfield_has_piece(bitfield, piece_index)
@@ -285,7 +301,7 @@ class PieceManager:
                 try:
                     await peer.request_block(piece_index, block_offset, block_length)
                     block_data = await asyncio.wait_for(
-                        peer.receive_block(piece_index, block_offset, block_length),
+                        peer.read_block(piece_index, block_offset, block_length),
                         timeout=self.BLOCK_DOWNLOAD_TIMEOUT,
                     )
                     if block_data is None:
@@ -327,29 +343,29 @@ class PieceManager:
     async def _validate_piece(self, piece_index: int, piece: Piece) -> bool:
         assembled_piece = piece.get_assembled_data()
         piece_hash = sha1(assembled_piece).digest()
-        if piece_index < 0 or piece_index >= self.total_piece_count:
+        if piece_index < 0 or piece_index >= self._total_piece_count:
             return False
 
-        expected_hash = self.torrent_metadata.pieces[piece_index]
+        expected_hash = self._torrent_metadata.pieces[piece_index]
         return piece_hash == expected_hash
     
     async def _validate_all_pieces(self) -> bool:
         pass
 
     async def _get_piece_length(self, piece_index: int) -> int:
-        default_piece_length = self.torrent_metadata.piece_length
-        if piece_index < 0 or piece_index >= self.total_piece_count:
+        default_piece_length = self._torrent_metadata.piece_length
+        if piece_index < 0 or piece_index >= self._total_piece_count:
             return default_piece_length
 
-        if piece_index < self.total_piece_count - 1:
+        if piece_index < self._total_piece_count - 1:
             return default_piece_length
 
-        total_length = self.torrent_metadata.length
+        total_length = self._torrent_metadata.length
         if total_length is None:
             return default_piece_length
 
         last_piece_length = total_length - (
-            default_piece_length * (self.total_piece_count - 1)
+            default_piece_length * (self._total_piece_count - 1)
         )
         if last_piece_length <= 0:
             return default_piece_length
