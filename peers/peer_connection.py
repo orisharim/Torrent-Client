@@ -1,6 +1,7 @@
 import asyncio
 import struct
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
+from collections import deque
 import fcntl
 
 from peers.torrent_storage import TorrentStorage
@@ -20,6 +21,7 @@ class PeerConnection:
     MESSAGE_REQUEST = 6
     MESSAGE_PIECE = 7
     MESSAGE_CANCEL = 8
+    PENDING_BLOCKS_LIMIT = 1024
 
     def __init__(self, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> None:
         self.host = host
@@ -35,7 +37,8 @@ class PeerConnection:
         self.interested = False
         self._message_loop_task: Optional[asyncio.Task] = None
         self._incoming_pieces: asyncio.Queue = asyncio.Queue()
-        self._pending_blocks: Dict[Tuple[int, int], bytes] = {}
+        self._pending_blocks: dict[Tuple[int, int], bytes] = {}
+        self._pending_blocks_queue: deque[Tuple[int, int]] = deque()
         self._pending_blocks_lock = asyncio.Lock()
         self._choked_lock = asyncio.Lock()
         self._interested_lock = asyncio.Lock()
@@ -290,7 +293,6 @@ class PeerConnection:
     async def _on_unknown(self, payload: bytes) -> bytes:
         return payload
       
-    #wrap them with timeout to prevent hanging if the peer is unresponsive
     async def _read_exactly(self, size: int) -> bytes:
         if self.reader is None:
             raise ConnectionError("not connected to peer")
@@ -305,7 +307,13 @@ class PeerConnection:
         key = (piece_index, begin)
         async with self._pending_blocks_lock:
             if key in self._pending_blocks:
-                return self._pending_blocks.pop(key)
+                # remove key from queue and return data
+                data = self._pending_blocks.pop(key)
+                try:
+                    self._pending_blocks_queue.remove(key)
+                except ValueError:
+                    pass
+                return data
 
         while True:
             item = await self._incoming_pieces.get()
@@ -320,6 +328,13 @@ class PeerConnection:
                 return block
 
             async with self._pending_blocks_lock:
+                while len(self._pending_blocks) >= self.PENDING_BLOCKS_LIMIT:
+                    try:
+                        old_key = self._pending_blocks_queue.popleft()
+                        self._pending_blocks.pop(old_key, None)
+                    except IndexError:
+                        break
                 self._pending_blocks[(pi, bgn)] = block
+                self._pending_blocks_queue.append((pi, bgn))
 
         
