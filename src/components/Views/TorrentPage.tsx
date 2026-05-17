@@ -10,7 +10,7 @@ const tableData = [
 
 export const TorrentPage = () => {
   return (
-    <div className="w-full min-h-screen bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
+    <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">Torrents</h1>
         <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
@@ -42,7 +42,8 @@ export const TorrentPage = () => {
           <span className="text-xs text-stone-500 dark:text-stone-400">{tableData.length} items</span>
         </div>
 
-        <table className="w-full text-sm">
+        <div className="overflow-y-auto max-h-80">
+          <table className="w-full text-sm">
           <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
             <tr className="text-left text-stone-500 dark:text-stone-400">
               <th className="px-4 py-3 font-medium">Files</th>
@@ -98,7 +99,8 @@ export const TorrentPage = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

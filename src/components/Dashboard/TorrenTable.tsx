@@ -111,28 +111,30 @@ export const TorrentTable = () => {
         </div>
       )}
 
-      <table className="w-full text-sm">
-        <TableHead
-          allSelected={allSelected}
-          someSelected={someSelected}
-          onToggleAll={toggleSelectAll}
-          stopAllTorrents={stopAllTorrents}
-        />
-        <tbody>
-          {torrents.map((torrent, index) => (
-            <TableRow
-              key={torrent.id}
-              index={index}
-              torrent={torrent}
-              selected={selected.has(torrent.id)}
-              onToggleSelect={toggleSelect}
-              onPause={pauseTorrent}
-              onResume={resumeTorrent}
-              onAskDelete={(id) => setPendingDelete([id])}
-            />
-          ))}
-        </tbody>
-      </table>
+      <div className="overflow-y-auto max-h-120">
+        <table className="w-full text-sm">
+          <TableHead
+            allSelected={allSelected}
+            someSelected={someSelected}
+            onToggleAll={toggleSelectAll}
+            stopAllTorrents={stopAllTorrents}
+          />
+          <tbody>
+            {torrents.map((torrent, index) => (
+              <TableRow
+                key={torrent.id}
+                index={index}
+                torrent={torrent}
+                selected={selected.has(torrent.id)}
+                onToggleSelect={toggleSelect}
+                onPause={pauseTorrent}
+                onResume={resumeTorrent}
+                onAskDelete={(id) => setPendingDelete([id])}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {pendingDelete.length > 0 && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

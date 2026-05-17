@@ -8,6 +8,7 @@ import {
   Share2,
   FileDown,
 } from "lucide-react";
+import Button from "../UI/Button";
 
 const stats = [
   { label: "Download", value: "1.8 MB/s", icon: <Download className="w-5 h-5" /> },
@@ -24,7 +25,7 @@ const recentTorrents = [
 
 export const HomePage = () => {
   return (
-    <div className="w-full min-h-screen bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
+    <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">Home</h1>
@@ -34,15 +35,8 @@ export const HomePage = () => {
         </div>
 
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm shadow-sm transition">
-            <Plus size={16} />
-            Add Torrent
-          </button>
-
-          <button className="flex items-center gap-2 px-3 py-2 border border-blue-200 dark:border-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/40 text-stone-600 dark:text-stone-300 rounded-md text-sm transition">
-            <Link size={16} />
-            Magnet
-          </button>
+          <Button text="Add Torrent" icon={<Plus size={16} />} action={() => {}} variant="primary" />
+          <Button text="Magnet" icon={<Link size={16} />} action={() => {}} />
         </div>
       </div>
 
@@ -76,38 +70,40 @@ export const HomePage = () => {
           </span>
         </div>
 
-        <table className="w-full text-sm">
-          <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
-            <tr className="text-left text-stone-500 dark:text-stone-400">
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Size</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {recentTorrents.map((torrent, index) => (
-              <tr
-                key={torrent.id}
-                className={`border-b border-blue-50 dark:border-blue-900/50 last:border-b-0 transition ${
-                  index % 2 === 1 ? "bg-blue-50/40 dark:bg-blue-900/10" : "bg-white dark:bg-stone-800"
-                } hover:bg-blue-50 dark:hover:bg-blue-900/20`}
-              >
-                <td className="px-4 py-4 font-medium text-stone-800 dark:text-stone-100">
-                  {torrent.name}
-                </td>
-                <td className="px-4 py-4 text-stone-600 dark:text-stone-300">
-                  {torrent.size}
-                </td>
-                <td className="px-4 py-4">
-                  <span className="inline-flex rounded-full bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
-                    {torrent.status}
-                  </span>
-                </td>
+        <div className="overflow-y-auto max-h-80">
+          <table className="w-full text-sm">
+            <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
+              <tr className="text-left text-stone-500 dark:text-stone-400">
+                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Size</th>
+                <th className="px-4 py-3 font-medium">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+
+            <tbody>
+              {recentTorrents.map((torrent, index) => (
+                <tr
+                  key={torrent.id}
+                  className={`border-b border-blue-50 dark:border-blue-900/50 last:border-b-0 transition ${
+                    index % 2 === 1 ? "bg-blue-50/40 dark:bg-blue-900/10" : "bg-white dark:bg-stone-800"
+                  } hover:bg-blue-50 dark:hover:bg-blue-900/20`}
+                >
+                  <td className="px-4 py-4 font-medium text-stone-800 dark:text-stone-100">
+                    {torrent.name}
+                  </td>
+                  <td className="px-4 py-4 text-stone-600 dark:text-stone-300">
+                    {torrent.size}
+                  </td>
+                  <td className="px-4 py-4">
+                    <span className="inline-flex rounded-full bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+                      {torrent.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

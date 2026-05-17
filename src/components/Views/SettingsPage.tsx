@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { useTheme, type Theme } from "../../context/ThemeContext";
+import Button from "../UI/Button";
 
 type Section = "general" | "downloads" | "connection" | "privacy" | "advanced";
 
@@ -124,7 +125,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[90vh]">
+      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-[700px] max-h-[85vh] flex flex-col overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900 shrink-0">
@@ -140,149 +141,145 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
           </button>
         </div>
 
-        {/* Section nav */}
-        <div className="flex gap-1 px-4 py-2.5 bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900 overflow-x-auto shrink-0">
-          {navItems.map(({ id, label, icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveSection(id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                activeSection === id
-                  ? "bg-blue-600 text-white"
-                  : "text-stone-500 dark:text-stone-400 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-600 dark:hover:text-blue-300"
-              }`}
-            >
-              {icon}
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Body: sidebar + content */}
+        <div className="flex flex-1 overflow-hidden">
 
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-          {activeSection === "general" && (
-            <>
-              <SectionCard title="General">
-                <Row label="Start on system startup" sub="Launch automatically when you log in">
-                  <Toggle checked={settings.startOnStartup} onChange={(v) => update("startOnStartup", v)} />
+          {/* Sidebar nav */}
+          <div className="w-44 shrink-0 bg-white dark:bg-stone-800 border-r border-blue-100 dark:border-blue-900 flex flex-col py-2">
+            {navItems.map(({ id, label, icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveSection(id)}
+                className={`flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium transition-colors text-left
+                  ${activeSection === id
+                    ? "bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-r-2 border-blue-600"
+                    : "text-stone-500 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-700/50 hover:text-stone-700 dark:hover:text-stone-200"
+                  }`}
+              >
+                {icon}
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            {activeSection === "general" && (
+              <>
+                <SectionCard title="General">
+                  <Row label="Start on system startup" sub="Launch automatically when you log in">
+                    <Toggle checked={settings.startOnStartup} onChange={(v) => update("startOnStartup", v)} />
+                  </Row>
+                  <Row label="Minimize to tray on close" sub="Keep running in the background">
+                    <Toggle checked={settings.minimizeToTray} onChange={(v) => update("minimizeToTray", v)} />
+                  </Row>
+                  <Row label="Language">
+                    <select value={settings.language} onChange={(e) => update("language", e.target.value)} className={inputCls}>
+                      {["English", "Hebrew", "Spanish", "French", "German"].map((l) => <option key={l}>{l}</option>)}
+                    </select>
+                  </Row>
+                  <Row label="Theme" sub="Takes effect immediately">
+                    <select
+                      value={theme}
+                      onChange={(e) => setTheme(e.target.value as Theme)}
+                      className={inputCls}
+                    >
+                      {["System default", "Light", "Dark"].map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </Row>
+                </SectionCard>
+                <DangerZone onReset={handleReset} />
+              </>
+            )}
+
+            {activeSection === "downloads" && (
+              <SectionCard title="Downloads">
+                <Row label="Default save location" sub={settings.savePath}>
+                  <Button text="Browse" action={() => {}} />
                 </Row>
-                <Row label="Minimize to tray on close" sub="Keep running in the background">
-                  <Toggle checked={settings.minimizeToTray} onChange={(v) => update("minimizeToTray", v)} />
+                <Row label="Download speed limit" sub="0 = unlimited">
+                  <div className="flex items-center gap-1.5">
+                    <input type="number" min={0} value={settings.downloadLimit}
+                      onChange={(e) => update("downloadLimit", Number(e.target.value))}
+                      className={`w-20 text-right ${inputCls}`}
+                    />
+                    <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
+                  </div>
                 </Row>
-                <Row label="Language">
-                  <select value={settings.language} onChange={(e) => update("language", e.target.value)} className={inputCls}>
-                    {["English", "Hebrew", "Spanish", "French", "German"].map((l) => <option key={l}>{l}</option>)}
-                  </select>
+                <Row label="Upload speed limit" sub="0 = unlimited">
+                  <div className="flex items-center gap-1.5">
+                    <input type="number" min={0} value={settings.uploadLimit}
+                      onChange={(e) => update("uploadLimit", Number(e.target.value))}
+                      className={`w-20 text-right ${inputCls}`}
+                    />
+                    <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
+                  </div>
                 </Row>
-                <Row label="Theme" sub="Takes effect immediately">
-                  <select
-                    value={theme}
-                    onChange={(e) => setTheme(e.target.value as Theme)}
-                    className={inputCls}
-                  >
-                    {["System default", "Light", "Dark"].map((t) => <option key={t}>{t}</option>)}
+                <Row label="Auto-start downloads" sub="Begin as soon as a torrent is added">
+                  <Toggle checked={settings.autoStart} onChange={(v) => update("autoStart", v)} />
+                </Row>
+                <Row label="Notify when complete">
+                  <Toggle checked={settings.notifyOnComplete} onChange={(v) => update("notifyOnComplete", v)} />
+                </Row>
+              </SectionCard>
+            )}
+
+            {activeSection === "connection" && (
+              <SectionCard title="Connection">
+                <Row label="Listening port">
+                  <input type="number" value={settings.listeningPort}
+                    onChange={(e) => update("listeningPort", Number(e.target.value))}
+                    className={`w-20 text-right ${inputCls}`}
+                  />
+                </Row>
+                <Row label="Enable UPnP port mapping">
+                  <Toggle checked={settings.enableUPnP} onChange={(v) => update("enableUPnP", v)} />
+                </Row>
+                <Row label="Enable DHT" sub="Distributed hash table for trackerless torrents">
+                  <Toggle checked={settings.enableDHT} onChange={(v) => update("enableDHT", v)} />
+                </Row>
+                <Row label="Proxy">
+                  <select value={settings.proxy} onChange={(e) => update("proxy", e.target.value)} className={inputCls}>
+                    {["None", "SOCKS5", "HTTP"].map((p) => <option key={p}>{p}</option>)}
                   </select>
                 </Row>
               </SectionCard>
-              <DangerZone onReset={handleReset} />
-            </>
-          )}
+            )}
 
-          {activeSection === "downloads" && (
-            <SectionCard title="Downloads">
-              <Row label="Default save location" sub={settings.savePath}>
-                <button type="button" className={`text-sm px-3 py-1 border border-blue-200 dark:border-blue-700 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/40 text-stone-600 dark:text-stone-300`}>
-                  Browse
-                </button>
-              </Row>
-              <Row label="Download speed limit" sub="0 = unlimited">
-                <div className="flex items-center gap-1.5">
-                  <input type="number" min={0} value={settings.downloadLimit}
-                    onChange={(e) => update("downloadLimit", Number(e.target.value))}
+            {activeSection === "privacy" && (
+              <SectionCard title="Privacy">
+                <Row label="Enable encryption" sub="Encrypt peer connections when possible">
+                  <Toggle checked={settings.enableEncryption} onChange={(v) => update("enableEncryption", v)} />
+                </Row>
+                <Row label="Anonymous mode" sub="Hides client identity from trackers and peers">
+                  <Toggle checked={settings.anonymousMode} onChange={(v) => update("anonymousMode", v)} />
+                </Row>
+              </SectionCard>
+            )}
+
+            {activeSection === "advanced" && (
+              <SectionCard title="Advanced">
+                <Row label="Max global connections">
+                  <input type="number" min={1} value={settings.maxConnections}
+                    onChange={(e) => update("maxConnections", Number(e.target.value))}
                     className={`w-20 text-right ${inputCls}`}
                   />
-                  <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
-                </div>
-              </Row>
-              <Row label="Upload speed limit" sub="0 = unlimited">
-                <div className="flex items-center gap-1.5">
-                  <input type="number" min={0} value={settings.uploadLimit}
-                    onChange={(e) => update("uploadLimit", Number(e.target.value))}
+                </Row>
+                <Row label="Max peers per torrent">
+                  <input type="number" min={1} value={settings.maxPeersPerTorrent}
+                    onChange={(e) => update("maxPeersPerTorrent", Number(e.target.value))}
                     className={`w-20 text-right ${inputCls}`}
                   />
-                  <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
-                </div>
-              </Row>
-              <Row label="Auto-start downloads" sub="Begin as soon as a torrent is added">
-                <Toggle checked={settings.autoStart} onChange={(v) => update("autoStart", v)} />
-              </Row>
-              <Row label="Notify when complete">
-                <Toggle checked={settings.notifyOnComplete} onChange={(v) => update("notifyOnComplete", v)} />
-              </Row>
-            </SectionCard>
-          )}
-
-          {activeSection === "connection" && (
-            <SectionCard title="Connection">
-              <Row label="Listening port">
-                <input type="number" value={settings.listeningPort}
-                  onChange={(e) => update("listeningPort", Number(e.target.value))}
-                  className={`w-20 text-right ${inputCls}`}
-                />
-              </Row>
-              <Row label="Enable UPnP port mapping">
-                <Toggle checked={settings.enableUPnP} onChange={(v) => update("enableUPnP", v)} />
-              </Row>
-              <Row label="Enable DHT" sub="Distributed hash table for trackerless torrents">
-                <Toggle checked={settings.enableDHT} onChange={(v) => update("enableDHT", v)} />
-              </Row>
-              <Row label="Proxy">
-                <select value={settings.proxy} onChange={(e) => update("proxy", e.target.value)} className={inputCls}>
-                  {["None", "SOCKS5", "HTTP"].map((p) => <option key={p}>{p}</option>)}
-                </select>
-              </Row>
-            </SectionCard>
-          )}
-
-          {activeSection === "privacy" && (
-            <SectionCard title="Privacy">
-              <Row label="Enable encryption" sub="Encrypt peer connections when possible">
-                <Toggle checked={settings.enableEncryption} onChange={(v) => update("enableEncryption", v)} />
-              </Row>
-              <Row label="Anonymous mode" sub="Hides client identity from trackers and peers">
-                <Toggle checked={settings.anonymousMode} onChange={(v) => update("anonymousMode", v)} />
-              </Row>
-            </SectionCard>
-          )}
-
-          {activeSection === "advanced" && (
-            <SectionCard title="Advanced">
-              <Row label="Max global connections">
-                <input type="number" min={1} value={settings.maxConnections}
-                  onChange={(e) => update("maxConnections", Number(e.target.value))}
-                  className={`w-20 text-right ${inputCls}`}
-                />
-              </Row>
-              <Row label="Max peers per torrent">
-                <input type="number" min={1} value={settings.maxPeersPerTorrent}
-                  onChange={(e) => update("maxPeersPerTorrent", Number(e.target.value))}
-                  className={`w-20 text-right ${inputCls}`}
-                />
-              </Row>
-            </SectionCard>
-          )}
+                </Row>
+              </SectionCard>
+            )}
+          </div>
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 bg-white dark:bg-stone-800 border-t border-blue-100 dark:border-blue-900 shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-sm px-4 py-2 rounded-full border border-blue-200 dark:border-blue-700 text-stone-600 dark:text-stone-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition-colors"
-          >
-            Cancel
-          </button>
+          <Button text="Cancel" action={onClose} />
           <button
             type="button"
             onClick={handleSave}
@@ -301,14 +298,10 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
 const DangerZone = ({ onReset }: { onReset: () => void }) => (
   <SectionCard title="Danger zone">
     <Row label="Clear all completed torrents" sub="Removes completed entries from the list">
-      <button type="button" className="text-sm px-3 py-1 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-        Clear
-      </button>
+      <Button text="Clear" action={() => {}} variant="danger" />
     </Row>
     <Row label="Reset all settings" sub="Restores defaults — cannot be undone">
-      <button type="button" onClick={onReset} className="text-sm px-3 py-1 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-        Reset
-      </button>
+      <Button text="Reset" action={onReset} variant="danger" />
     </Row>
   </SectionCard>
 );
