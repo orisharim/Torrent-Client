@@ -6,9 +6,11 @@ import {
   Search,
 } from "lucide-react";
 import { useState } from "react";
+import { useLanguage } from "../../context/LanguageContext";
 
 const Toolbar = () => {
   const [active, setActive] = useState<string | null>(null);
+  const { t } = useLanguage();
 
   return (
     <div className="sticky top-0 z-50 w-full h-16 bg-blue-100 dark:bg-stone-900 border-b border-blue-200 dark:border-blue-900 px-4 py-2 flex items-center gap-2">
@@ -23,12 +25,12 @@ const Toolbar = () => {
         `}
       >
         <Plus size={20} className="font-bold" />
-        <span className="hidden sm:inline">Add Torrent</span>
+        <span className="hidden sm:inline">{t("toolbar.addTorrent")}</span>
       </button>
 
       <ToolbarButton
         icon={<Link size={16} />}
-        label="Magnet"
+        label={t("toolbar.magnet")}
         active={active === "magnet"}
         onClick={() => setActive("magnet")}
       />
@@ -37,14 +39,14 @@ const Toolbar = () => {
 
       <ToolbarButton
         icon={<Square size={16} />}
-        label="Stop"
+        label={t("toolbar.stop")}
         active={active === "stop"}
         onClick={() => setActive("stop")}
       />
 
       <ToolbarButton
         icon={<Trash2 size={16} />}
-        label="Remove"
+        label={t("toolbar.remove")}
         active={active === "remove"}
         onClick={() => setActive("remove")}
         danger
@@ -54,7 +56,7 @@ const Toolbar = () => {
         <Search className="w-4 h-4 text-stone-400 dark:text-stone-500 mr-2" />
         <input
           type="text"
-          placeholder="Search..."
+          placeholder={t("toolbar.search")}
           className="w-full text-sm bg-transparent outline-none text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500"
         />
       </div>

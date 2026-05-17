@@ -9,13 +9,7 @@ import {
   FileDown,
 } from "lucide-react";
 import Button from "../UI/Button";
-
-const stats = [
-  { label: "Download", value: "1.8 MB/s", icon: <Download className="w-5 h-5" /> },
-  { label: "Upload", value: "0.3 MB/s", icon: <Upload className="w-5 h-5" /> },
-  { label: "Active", value: "3", icon: <Activity className="w-5 h-5" /> },
-  { label: "Seeding", value: "2", icon: <Share2 className="w-5 h-5" /> },
-];
+import { useLanguage } from "../../context/LanguageContext";
 
 const recentTorrents = [
   { id: 1, name: "ubuntu.iso", size: "2.5 GB", status: "Completed" },
@@ -24,19 +18,28 @@ const recentTorrents = [
 ];
 
 export const HomePage = () => {
+  const { t } = useLanguage();
+
+  const stats = [
+    { label: t("home.download"), value: "1.8 MB/s", icon: <Download className="w-5 h-5" /> },
+    { label: t("home.upload"), value: "0.3 MB/s", icon: <Upload className="w-5 h-5" /> },
+    { label: t("home.active"), value: "3", icon: <Activity className="w-5 h-5" /> },
+    { label: t("home.seeding"), value: "2", icon: <Share2 className="w-5 h-5" /> },
+  ];
+
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">Home</h1>
+          <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">{t("home.title")}</h1>
           <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-            Overview of your torrent activity
+            {t("home.subtitle")}
           </p>
         </div>
 
         <div className="flex gap-2">
-          <Button text="Add Torrent" icon={<Plus size={16} />} action={() => {}} variant="primary" />
-          <Button text="Magnet" icon={<Link size={16} />} action={() => {}} />
+          <Button text={t("home.addTorrent")} icon={<Plus size={16} />} action={() => {}} variant="primary" />
+          <Button text={t("home.magnet")} icon={<Link size={16} />} action={() => {}} />
         </div>
       </div>
 
@@ -63,10 +66,10 @@ export const HomePage = () => {
         <div className="px-4 py-3 border-b border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2">
             <FileDown className="w-4 h-4" />
-            Recent Torrents
+            {t("home.recentTorrents")}
           </h2>
           <span className="text-xs text-stone-500 dark:text-stone-400">
-            {recentTorrents.length} items
+            {recentTorrents.length} {t("common.items")}
           </span>
         </div>
 
@@ -74,9 +77,9 @@ export const HomePage = () => {
           <table className="w-full text-sm">
             <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
               <tr className="text-left text-stone-500 dark:text-stone-400">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Size</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">{t("table.name")}</th>
+                <th className="px-4 py-3 font-medium">{t("table.size")}</th>
+                <th className="px-4 py-3 font-medium">{t("table.status")}</th>
               </tr>
             </thead>
 

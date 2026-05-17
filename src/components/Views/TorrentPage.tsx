@@ -1,5 +1,6 @@
 import React from "react";
 import { FileDown, Users, Gauge, Radio } from "lucide-react";
+import { useLanguage } from "../../context/LanguageContext";
 
 const tableData = [
   { id: 0, files: "ubuntu.iso",       info: "75% Downloaded", peers: "45 peers", trackers: "tracker.ubuntu.com", speed: "1.8 MB/s" },
@@ -9,26 +10,28 @@ const tableData = [
 ];
 
 export const TorrentPage = () => {
+  const { t } = useLanguage();
+
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">Torrents</h1>
+        <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">{t("torrents.title")}</h1>
         <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-          Monitor torrent files, peers, trackers, and speed
+          {t("torrents.subtitle")}
         </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white dark:bg-stone-800 border border-blue-200 dark:border-blue-800 rounded-lg p-4 shadow-sm">
-          <p className="text-sm text-stone-500 dark:text-stone-400">Total Torrents</p>
+          <p className="text-sm text-stone-500 dark:text-stone-400">{t("torrents.total")}</p>
           <p className="text-xl font-bold text-stone-800 dark:text-stone-100">{tableData.length}</p>
         </div>
         <div className="bg-white dark:bg-stone-800 border border-blue-200 dark:border-blue-800 rounded-lg p-4 shadow-sm">
-          <p className="text-sm text-stone-500 dark:text-stone-400">Active Peers</p>
+          <p className="text-sm text-stone-500 dark:text-stone-400">{t("torrents.peers")}</p>
           <p className="text-xl font-bold text-blue-600 dark:text-blue-400">167</p>
         </div>
         <div className="bg-white dark:bg-stone-800 border border-blue-200 dark:border-blue-800 rounded-lg p-4 shadow-sm">
-          <p className="text-sm text-stone-500 dark:text-stone-400">Current Speed</p>
+          <p className="text-sm text-stone-500 dark:text-stone-400">{t("torrents.speed")}</p>
           <p className="text-xl font-bold text-green-600 dark:text-green-400">4.5 MB/s</p>
         </div>
       </div>
@@ -37,20 +40,20 @@ export const TorrentPage = () => {
         <div className="px-4 py-3 border-b border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2">
             <FileDown className="w-4 h-4" />
-            Torrent List
+            {t("torrents.list")}
           </h2>
-          <span className="text-xs text-stone-500 dark:text-stone-400">{tableData.length} items</span>
+          <span className="text-xs text-stone-500 dark:text-stone-400">{tableData.length} {t("common.items")}</span>
         </div>
 
         <div className="overflow-y-auto max-h-80">
           <table className="w-full text-sm">
           <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
             <tr className="text-left text-stone-500 dark:text-stone-400">
-              <th className="px-4 py-3 font-medium">Files</th>
-              <th className="px-4 py-3 font-medium">Info</th>
-              <th className="px-4 py-3 font-medium">Peers</th>
-              <th className="px-4 py-3 font-medium">Trackers</th>
-              <th className="px-4 py-3 font-medium text-right">Speed</th>
+              <th className="px-4 py-3 font-medium">{t("torrents.files")}</th>
+              <th className="px-4 py-3 font-medium">{t("torrents.info")}</th>
+              <th className="px-4 py-3 font-medium">{t("torrents.peers")}</th>
+              <th className="px-4 py-3 font-medium">{t("torrents.trackers")}</th>
+              <th className="px-4 py-3 font-medium text-right">{t("table.speed")}</th>
             </tr>
           </thead>
 

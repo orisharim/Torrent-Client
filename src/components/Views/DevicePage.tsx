@@ -1,6 +1,7 @@
 import React from "react";
 import { Monitor, Smartphone, Tablet, Power, Wifi, WifiOff } from "lucide-react";
 import Button from "../UI/Button";
+import { useLanguage } from "../../context/LanguageContext";
 
 const devices = [
   { id: 1, name: "My PC",      type: "Desktop", status: "Online",  lastSeen: "Now"          },
@@ -15,32 +16,34 @@ const getIcon = (type: string) => {
 };
 
 export const DevicePage = () => {
+  const { t } = useLanguage();
+
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">Devices</h1>
+        <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">{t("devices.title")}</h1>
         <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-          Manage connected devices and active sessions
+          {t("devices.subtitle")}
         </p>
       </div>
 
       <div className="w-full border border-blue-200 dark:border-blue-800 rounded-xl overflow-hidden shadow-sm bg-white dark:bg-stone-800">
         <div className="px-4 py-3 border-b border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300">
-            Connected Devices
+            {t("devices.connected")}
           </h2>
-          <span className="text-xs text-stone-500 dark:text-stone-400">{devices.length} devices</span>
+          <span className="text-xs text-stone-500 dark:text-stone-400">{devices.length} {t("common.devices")}</span>
         </div>
 
         <div className="overflow-y-auto max-h-80">
           <table className="w-full text-sm">
             <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
               <tr className="text-left text-stone-500 dark:text-stone-400">
-                <th className="px-4 py-3 font-medium">Device</th>
-                <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Last Seen</th>
-                <th className="px-4 py-3 font-medium text-right">Action</th>
+                <th className="px-4 py-3 font-medium">{t("devices.device")}</th>
+                <th className="px-4 py-3 font-medium">{t("devices.type")}</th>
+                <th className="px-4 py-3 font-medium">{t("devices.status")}</th>
+                <th className="px-4 py-3 font-medium">{t("devices.lastSeen")}</th>
+                <th className="px-4 py-3 font-medium text-right">{t("devices.action")}</th>
               </tr>
             </thead>
 
@@ -73,13 +76,13 @@ export const DevicePage = () => {
                           : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
                       }`}>
                         {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                        {device.status}
+                        {t(isOnline ? "devices.online" : "devices.offline")}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-stone-600 dark:text-stone-300">{device.lastSeen}</td>
                     <td className="px-4 py-4 text-right">
                       <Button
-                        text="Disconnect"
+                        text={t("devices.disconnect")}
                         icon={<Power className="w-4 h-4" />}
                         action={() => {}}
                         variant="danger"

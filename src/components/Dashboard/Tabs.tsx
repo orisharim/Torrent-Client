@@ -6,21 +6,24 @@ import {
   Home,
   Settings,
 } from "lucide-react";
+import { useLanguage } from "../../context/LanguageContext";
 
 type TabsProps = {
   setPage: React.Dispatch<React.SetStateAction<string>>;
   page: string;
 };
 
-const tabItems = [
-  { id: "home", label: "Home", icon: Home },
-  { id: "torrent", label: "Torrent", icon: ArrowUpDown },
-  { id: "network", label: "Network", icon: Wifi },
-  { id: "devices", label: "Devices", icon: MonitorSmartphone },
-  { id: "settings", label: "Settings", icon: Settings },
-];
-
 const Tabs: React.FC<TabsProps> = ({ setPage, page }) => {
+  const { t } = useLanguage();
+
+  const tabItems = [
+    { id: "home", label: t("nav.home"), icon: Home },
+    { id: "torrent", label: t("nav.torrent"), icon: ArrowUpDown },
+    { id: "network", label: t("nav.network"), icon: Wifi },
+    { id: "devices", label: t("nav.devices"), icon: MonitorSmartphone },
+    { id: "settings", label: t("nav.settings"), icon: Settings },
+  ];
+
   return (
     <div className="flex items-center bg-blue-100 dark:bg-blue-950 rounded-full px-2 py-2 gap-1 shadow-inner border border-blue-200 dark:border-blue-800 w-fit mx-4 mt-4">
       {tabItems.map((item) => {

@@ -5,12 +5,14 @@ import {
   Wifi,
   Lock,
   SlidersHorizontal,
+  Palette,
   X,
 } from "lucide-react";
 import { useTheme, type Theme } from "../../context/ThemeContext";
+import { useLanguage, type Language } from "../../context/LanguageContext";
 import Button from "../UI/Button";
 
-type Section = "general" | "downloads" | "connection" | "privacy" | "advanced";
+type Section = "general" | "appearance" | "downloads" | "connection" | "privacy" | "advanced";
 
 type AppSettings = {
   startOnStartup: boolean;
@@ -49,14 +51,6 @@ const defaultSettings: AppSettings = {
   maxConnections: 200,
   maxPeersPerTorrent: 50,
 };
-
-const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
-  { id: "general",    label: "General",    icon: <SettingsIcon size={15} /> },
-  { id: "downloads",  label: "Downloads",  icon: <Download size={15} /> },
-  { id: "connection", label: "Connection", icon: <Wifi size={15} /> },
-  { id: "privacy",    label: "Privacy",    icon: <Lock size={15} /> },
-  { id: "advanced",   label: "Advanced",   icon: <SlidersHorizontal size={15} /> },
-];
 
 const Toggle = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
   <button
@@ -103,9 +97,19 @@ type SettingsPageProps = {
 
 export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const { theme, setTheme } = useTheme();
+  const { language, setLanguage, t } = useLanguage();
   const [activeSection, setActiveSection] = useState<Section>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [saved, setSaved] = useState(false);
+
+  const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
+    { id: "general",    label: t("settings.general"),    icon: <SettingsIcon size={15} /> },
+    { id: "appearance", label: t("settings.appearance"), icon: <Palette size={15} /> },
+    { id: "downloads",  label: t("settings.downloads"),  icon: <Download size={15} /> },
+    { id: "connection", label: t("settings.connection"), icon: <Wifi size={15} /> },
+    { id: "privacy",    label: t("settings.privacy"),    icon: <Lock size={15} /> },
+    { id: "advanced",   label: t("settings.advanced"),   icon: <SlidersHorizontal size={15} /> },
+  ];
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -117,7 +121,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   };
 
   const handleReset = () => {
-    if (confirm("Reset all settings to defaults?")) setSettings(defaultSettings);
+    if (confirm(t("settings.resetConfirm"))) setSettings(defaultSettings);
   };
 
   return (
@@ -125,13 +129,12 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-[700px] max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-[700px] h-[80vh] flex flex-col overflow-hidden">
 
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900 shrink-0">
           <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
             <SettingsIcon size={18} />
-            <span className="font-semibold text-base">Settings</span>
+            <span className="font-semibold text-base">{t("settings.title")}</span>
           </div>
           <button
             onClick={onClose}
@@ -141,10 +144,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
           </button>
         </div>
 
-        {/* Body: sidebar + content */}
         <div className="flex flex-1 overflow-hidden">
 
-          {/* Sidebar nav */}
           <div className="w-44 shrink-0 bg-white dark:bg-stone-800 border-r border-blue-100 dark:border-blue-900 flex flex-col py-2">
             {navItems.map(({ id, label, icon }) => (
               <button
@@ -163,83 +164,91 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
             ))}
           </div>
 
-          {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-4">
             {activeSection === "general" && (
               <>
-                <SectionCard title="General">
-                  <Row label="Start on system startup" sub="Launch automatically when you log in">
+                <SectionCard title={t("settings.general")}>
+                  <Row label={t("settings.startOnStartup")} sub={t("settings.startOnStartupSub")}>
                     <Toggle checked={settings.startOnStartup} onChange={(v) => update("startOnStartup", v)} />
                   </Row>
-                  <Row label="Minimize to tray on close" sub="Keep running in the background">
+                  <Row label={t("settings.minimizeToTray")} sub={t("settings.minimizeToTraySub")}>
                     <Toggle checked={settings.minimizeToTray} onChange={(v) => update("minimizeToTray", v)} />
-                  </Row>
-                  <Row label="Language">
-                    <select value={settings.language} onChange={(e) => update("language", e.target.value)} className={inputCls}>
-                      {["English", "Hebrew", "Spanish", "French", "German"].map((l) => <option key={l}>{l}</option>)}
-                    </select>
-                  </Row>
-                  <Row label="Theme" sub="Takes effect immediately">
-                    <select
-                      value={theme}
-                      onChange={(e) => setTheme(e.target.value as Theme)}
-                      className={inputCls}
-                    >
-                      {["System default", "Light", "Dark"].map((t) => <option key={t}>{t}</option>)}
-                    </select>
                   </Row>
                 </SectionCard>
                 <DangerZone onReset={handleReset} />
               </>
             )}
 
-            {activeSection === "downloads" && (
-              <SectionCard title="Downloads">
-                <Row label="Default save location" sub={settings.savePath}>
-                  <Button text="Browse" action={() => {}} />
+            {activeSection === "appearance" && (
+              <SectionCard title={t("settings.appearance")}>
+                <Row label={t("settings.language")}>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as Language)}
+                    className={inputCls}
+                  >
+                    {["English", "Hebrew", "Spanish", "French", "German"].map((l) => <option key={l}>{l}</option>)}
+                  </select>
                 </Row>
-                <Row label="Download speed limit" sub="0 = unlimited">
+                <Row label={t("settings.theme")} sub={t("settings.themeSub")}>
+                  <select
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value as Theme)}
+                    className={inputCls}
+                  >
+                    {["System default", "Light", "Dark"].map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </Row>
+              </SectionCard>
+            )}
+
+            {activeSection === "downloads" && (
+              <SectionCard title={t("settings.downloads")}>
+                <Row label={t("settings.saveLocation")} sub={settings.savePath}>
+                  <Button text={t("settings.browse")} action={() => {}} />
+                </Row>
+                <Row label={t("settings.downloadLimit")} sub={t("settings.unlimited")}>
                   <div className="flex items-center gap-1.5">
                     <input type="number" min={0} value={settings.downloadLimit}
                       onChange={(e) => update("downloadLimit", Number(e.target.value))}
                       className={`w-20 text-right ${inputCls}`}
                     />
-                    <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
+                    <span className="text-xs text-stone-400 dark:text-stone-500">{t("settings.kbps")}</span>
                   </div>
                 </Row>
-                <Row label="Upload speed limit" sub="0 = unlimited">
+                <Row label={t("settings.uploadLimit")} sub={t("settings.unlimited")}>
                   <div className="flex items-center gap-1.5">
                     <input type="number" min={0} value={settings.uploadLimit}
                       onChange={(e) => update("uploadLimit", Number(e.target.value))}
                       className={`w-20 text-right ${inputCls}`}
                     />
-                    <span className="text-xs text-stone-400 dark:text-stone-500">KB/s</span>
+                    <span className="text-xs text-stone-400 dark:text-stone-500">{t("settings.kbps")}</span>
                   </div>
                 </Row>
-                <Row label="Auto-start downloads" sub="Begin as soon as a torrent is added">
+                <Row label={t("settings.autoStart")} sub={t("settings.autoStartSub")}>
                   <Toggle checked={settings.autoStart} onChange={(v) => update("autoStart", v)} />
                 </Row>
-                <Row label="Notify when complete">
+                <Row label={t("settings.notifyComplete")}>
                   <Toggle checked={settings.notifyOnComplete} onChange={(v) => update("notifyOnComplete", v)} />
                 </Row>
               </SectionCard>
             )}
 
             {activeSection === "connection" && (
-              <SectionCard title="Connection">
-                <Row label="Listening port">
+              <SectionCard title={t("settings.connection")}>
+                <Row label={t("settings.listeningPort")}>
                   <input type="number" value={settings.listeningPort}
                     onChange={(e) => update("listeningPort", Number(e.target.value))}
                     className={`w-20 text-right ${inputCls}`}
                   />
                 </Row>
-                <Row label="Enable UPnP port mapping">
+                <Row label={t("settings.upnp")}>
                   <Toggle checked={settings.enableUPnP} onChange={(v) => update("enableUPnP", v)} />
                 </Row>
-                <Row label="Enable DHT" sub="Distributed hash table for trackerless torrents">
+                <Row label={t("settings.dht")} sub={t("settings.dhtSub")}>
                   <Toggle checked={settings.enableDHT} onChange={(v) => update("enableDHT", v)} />
                 </Row>
-                <Row label="Proxy">
+                <Row label={t("settings.proxy")}>
                   <select value={settings.proxy} onChange={(e) => update("proxy", e.target.value)} className={inputCls}>
                     {["None", "SOCKS5", "HTTP"].map((p) => <option key={p}>{p}</option>)}
                   </select>
@@ -248,25 +257,25 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
             )}
 
             {activeSection === "privacy" && (
-              <SectionCard title="Privacy">
-                <Row label="Enable encryption" sub="Encrypt peer connections when possible">
+              <SectionCard title={t("settings.privacy")}>
+                <Row label={t("settings.encryption")} sub={t("settings.encryptionSub")}>
                   <Toggle checked={settings.enableEncryption} onChange={(v) => update("enableEncryption", v)} />
                 </Row>
-                <Row label="Anonymous mode" sub="Hides client identity from trackers and peers">
+                <Row label={t("settings.anonymous")} sub={t("settings.anonymousSub")}>
                   <Toggle checked={settings.anonymousMode} onChange={(v) => update("anonymousMode", v)} />
                 </Row>
               </SectionCard>
             )}
 
             {activeSection === "advanced" && (
-              <SectionCard title="Advanced">
-                <Row label="Max global connections">
+              <SectionCard title={t("settings.advanced")}>
+                <Row label={t("settings.maxConnections")}>
                   <input type="number" min={1} value={settings.maxConnections}
                     onChange={(e) => update("maxConnections", Number(e.target.value))}
                     className={`w-20 text-right ${inputCls}`}
                   />
                 </Row>
-                <Row label="Max peers per torrent">
+                <Row label={t("settings.maxPeers")}>
                   <input type="number" min={1} value={settings.maxPeersPerTorrent}
                     onChange={(e) => update("maxPeersPerTorrent", Number(e.target.value))}
                     className={`w-20 text-right ${inputCls}`}
@@ -277,9 +286,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 bg-white dark:bg-stone-800 border-t border-blue-100 dark:border-blue-900 shrink-0">
-          <Button text="Cancel" action={onClose} />
+          <Button text={t("settings.cancel")} action={onClose} />
           <button
             type="button"
             onClick={handleSave}
@@ -287,7 +295,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
               saved ? "bg-green-500" : "bg-blue-600 hover:bg-blue-700"
             }`}
           >
-            {saved ? "Saved!" : "Save changes"}
+            {saved ? t("settings.saved") : t("settings.saveChanges")}
           </button>
         </div>
       </div>
@@ -295,13 +303,16 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   );
 };
 
-const DangerZone = ({ onReset }: { onReset: () => void }) => (
-  <SectionCard title="Danger zone">
-    <Row label="Clear all completed torrents" sub="Removes completed entries from the list">
-      <Button text="Clear" action={() => {}} variant="danger" />
-    </Row>
-    <Row label="Reset all settings" sub="Restores defaults — cannot be undone">
-      <Button text="Reset" action={onReset} variant="danger" />
-    </Row>
-  </SectionCard>
-);
+const DangerZone = ({ onReset }: { onReset: () => void }) => {
+  const { t } = useLanguage();
+  return (
+    <SectionCard title={t("settings.dangerZone")}>
+      <Row label={t("settings.clearCompleted")} sub={t("settings.clearCompletedSub")}>
+        <Button text={t("settings.clear")} action={() => {}} variant="danger" />
+      </Row>
+      <Row label={t("settings.resetAll")} sub={t("settings.resetAllSub")}>
+        <Button text={t("settings.reset")} action={onReset} variant="danger" />
+      </Row>
+    </SectionCard>
+  );
+};

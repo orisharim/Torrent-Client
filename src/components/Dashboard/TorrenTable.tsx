@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
+import { useLanguage } from "../../context/LanguageContext";
 
 type Torrent = {
   id: number;
@@ -12,6 +13,7 @@ type Torrent = {
 };
 
 export const TorrentTable = () => {
+  const { t } = useLanguage();
   const [torrents, setTorrents] = useState<Torrent[]>([
     { id: 0, name: "ubuntu.iso", size: 2.5, progress: 75, speed: 1.8, status: "Downloading", health: "Good" },
     { id: 1, name: "movie.mp4", size: 1.2, progress: 50, speed: 0, status: "Paused", health: "Medium" },
@@ -28,11 +30,11 @@ export const TorrentTable = () => {
   useEffect(() => {
     const interval = setInterval(() => {
       setTorrents((prev) =>
-        prev.map((t) => {
-          if (t.status !== "Downloading") return t;
-          const newProgress = Math.min(t.progress + Math.random() * 3, 100);
+        prev.map((torrent) => {
+          if (torrent.status !== "Downloading") return torrent;
+          const newProgress = Math.min(torrent.progress + Math.random() * 3, 100);
           return {
-            ...t,
+            ...torrent,
             progress: newProgress,
             speed: newProgress >= 100 ? 0 : Number((Math.random() * 5).toFixed(1)),
             status: newProgress >= 100 ? "Completed" : "Downloading",
@@ -52,61 +54,65 @@ export const TorrentTable = () => {
   };
 
   const toggleSelectAll = () => {
-    setSelected(selected.size === torrents.length ? new Set() : new Set(torrents.map((t) => t.id)));
+    setSelected(selected.size === torrents.length ? new Set() : new Set(torrents.map((torrent) => torrent.id)));
   };
 
   const pauseTorrent = (id: number) => {
-    setTorrents((prev) => prev.map((t) => (t.id === id ? { ...t, status: "Paused", speed: 0 } : t)));
+    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
   };
 
   const stopAllTorrents = () => {
-    setTorrents((prev) => prev.map((t) => (t.status === "Downloading" ? { ...t, status: "Paused", speed: 0 } : t)));
+    setTorrents((prev) => prev.map((torrent) => (torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
   };
 
   const resumeTorrent = (id: number) => {
     setTorrents((prev) =>
-      prev.map((t) => (t.id === id && t.progress < 100 ? { ...t, status: "Downloading", speed: 1.5 } : t))
+      prev.map((torrent) => (torrent.id === id && torrent.progress < 100 ? { ...torrent, status: "Downloading", speed: 1.5 } : torrent))
     );
   };
 
   const deleteTorrents = (ids: number[]) => {
-    setTorrents((prev) => prev.filter((t) => !ids.includes(t.id)));
+    setTorrents((prev) => prev.filter((torrent) => !ids.includes(torrent.id)));
     setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
   };
 
   const pauseSelected = () => {
     setTorrents((prev) =>
-      prev.map((t) => (selected.has(t.id) && t.status === "Downloading" ? { ...t, status: "Paused", speed: 0 } : t))
+      prev.map((torrent) => (selected.has(torrent.id) && torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent))
     );
   };
 
   const allSelected = torrents.length > 0 && selected.size === torrents.length;
   const someSelected = selected.size > 0 && !allSelected;
 
+  const deleteTitle = pendingDelete.length > 1
+    ? t("torrent.confirmDeleteMany").replace("{count}", String(pendingDelete.length))
+    : t("torrent.confirmDelete");
+
   return (
     <div className="bg-white dark:bg-stone-800 border border-blue-100 dark:border-blue-900 rounded-2xl overflow-hidden shadow-sm">
       {selected.size > 0 && (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 dark:bg-blue-950 border-b border-blue-100 dark:border-blue-900">
-          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selected.size} selected</span>
+          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selected.size} {t("torrent.selected")}</span>
           <button
             onClick={pauseSelected}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/40 transition-colors"
           >
             <Pause size={12} />
-            Pause
+            {t("torrent.pause")}
           </button>
           <button
             onClick={() => setPendingDelete([...selected])}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
           >
             <Trash2 size={12} />
-            Delete
+            {t("torrent.delete")}
           </button>
           <button
             onClick={() => setSelected(new Set())}
             className="ml-auto text-xs text-blue-400 dark:text-blue-500 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
           >
-            Clear
+            {t("torrent.clear")}
           </button>
         </div>
       )}
@@ -140,21 +146,21 @@ export const TorrentTable = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-stone-800 rounded-2xl shadow-2xl w-80 p-6">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">
-              Delete {pendingDelete.length > 1 ? `${pendingDelete.length} torrents` : "Torrent"}?
+              {deleteTitle}
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">This action cannot be undone.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">{t("torrent.undone")}</p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setPendingDelete([])}
                 className="px-4 py-2 rounded-full text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-800/60 transition-colors"
               >
-                Cancel
+                {t("torrent.cancel")}
               </button>
               <button
                 onClick={() => { deleteTorrents(pendingDelete); setPendingDelete([]); }}
                 className="px-4 py-2 rounded-full text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
               >
-                Delete
+                {t("torrent.delete")}
               </button>
             </div>
           </div>
@@ -171,7 +177,9 @@ type TableHeadProps = {
   stopAllTorrents: () => void;
 };
 
-const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: TableHeadProps) => (
+const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: TableHeadProps) => {
+  const { t } = useLanguage();
+  return (
   <thead>
     <tr className="bg-blue-50 dark:bg-blue-950/60 text-xs font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide border-b border-blue-100 dark:border-blue-900">
       <th className="px-4 py-3 w-8">
@@ -183,25 +191,26 @@ const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: 
           className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
         />
       </th>
-      <th className="text-left px-4 py-3">Name</th>
-      <th className="text-left px-4 py-3">Size</th>
-      <th className="text-left px-4 py-3 w-48">Progress</th>
-      <th className="text-left px-4 py-3">Speed</th>
-      <th className="text-left px-4 py-3">Status</th>
-      <th className="text-left px-4 py-3">Health</th>
-      <th className="text-left px-4 py-3">Actions</th>
+      <th className="text-left px-4 py-3">{t("table.name")}</th>
+      <th className="text-left px-4 py-3">{t("table.size")}</th>
+      <th className="text-left px-4 py-3 w-48">{t("table.progress")}</th>
+      <th className="text-left px-4 py-3">{t("table.speed")}</th>
+      <th className="text-left px-4 py-3">{t("table.status")}</th>
+      <th className="text-left px-4 py-3">{t("table.health")}</th>
+      <th className="text-left px-4 py-3">{t("table.actions")}</th>
       <th className="px-4 py-3">
         <button
           onClick={stopAllTorrents}
           className="flex items-center gap-1.5 rounded-full bg-red-50 dark:bg-red-900/30 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
         >
           <Pause size={12} />
-          Stop All
+          {t("torrent.stopAll")}
         </button>
       </th>
     </tr>
   </thead>
-);
+  );
+};
 
 const statusStyles: Record<string, string> = {
   Downloading: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
@@ -228,7 +237,9 @@ type TableRowProps = {
   onAskDelete: (id: number) => void;
 };
 
-const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume, onAskDelete }: TableRowProps) => (
+const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume, onAskDelete }: TableRowProps) => {
+  const { t } = useLanguage();
+  return (
   <tr className={`text-sm border-b border-blue-50 dark:border-blue-900/50 last:border-0 transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-900/20 ${selected ? "bg-blue-50 dark:bg-blue-900/30" : index % 2 ? "bg-blue-50/30 dark:bg-blue-950/20" : "bg-white dark:bg-stone-800"}`}>
     <td className="px-4 py-3">
       <input
@@ -260,13 +271,13 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
 
     <td className="px-4 py-3">
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]}`}>
-        {torrent.status}
+        {t(`status.${torrent.status.toLowerCase()}`)}
       </span>
     </td>
 
     <td className="px-4 py-3">
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${healthStyles[torrent.health] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"}`}>
-        {torrent.health}
+        {t(`health.${torrent.health.toLowerCase()}`)}
       </span>
     </td>
 
@@ -275,7 +286,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
         {(torrent.status === "Downloading" || torrent.status === "Seeding") && (
           <button
             onClick={() => onPause(torrent.id)}
-            title="Pause"
+            title={t("torrent.pause")}
             className="p-1.5 rounded-full text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
           >
             <Pause size={15} />
@@ -284,7 +295,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
         {torrent.status === "Paused" && (
           <button
             onClick={() => onResume(torrent.id)}
-            title="Resume"
+            title={t("torrent.resume")}
             className="p-1.5 rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
           >
             <Play size={15} />
@@ -292,7 +303,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
         )}
         <button
           onClick={() => onAskDelete(torrent.id)}
-          title="Delete"
+          title={t("torrent.delete")}
           className="p-1.5 rounded-full text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
         >
           <Trash2 size={15} />
@@ -301,4 +312,5 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
     </td>
     <td />
   </tr>
-);
+  );
+};
