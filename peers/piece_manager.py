@@ -34,11 +34,11 @@ class PieceManager:
         )
 
         self._peers: list[PeerConnection] = []
-        self._pieces_requested_by_peer: dict[PeerConnection, set[int]] = {}
+        self._pieces_requested_from_peer: dict[PeerConnection, set[int]] = {}
         for ip, port in peers_info:
             peer = PeerConnection(ip, port, torrent_metadata.info_hash, peer_id, self.torrent_storage)
             self._peers.append(peer)
-            self._pieces_requested_by_peer[peer] = set()
+            self._pieces_requested_from_peer[peer] = set()
 
 
         self._bitfield: bytes = b""  # bitfield of pieces we have
@@ -50,27 +50,31 @@ class PieceManager:
         self._peers_lock = asyncio.Lock()
         self._bitfield_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
-        self._pieces_requested_by_peer_lock = asyncio.Lock()
+        self._pieces_requested_from_peer_lock = asyncio.Lock()
 
         self._download_tasks: list[asyncio.Task] = []
         
     async def set_peers(self, peers_info: list[tuple[str, int]]):
+        """Closes all existing connections and sets the peer list to the provided peers"""
+        await self.close_all()
         async with self._peers_lock:
             self._peers = []
-            self._pieces_requested_by_peer = {}
+            self._pieces_requested_from_peer = {}
             for ip, port in peers_info:
                 peer = PeerConnection(ip, port, self._torrent_metadata.info_hash, self._peer_id, self.torrent_storage)
                 self._peers.append(peer)
-                self._pieces_requested_by_peer[peer] = set()
+                self._pieces_requested_from_peer[peer] = set()
 
     async def add_peers(self, new_peers_info: list[tuple[str, int]]):
+        """Adds the provided peers to the existing peer list without closing existing connections"""
         async with self._peers_lock:
             for ip, port in new_peers_info:
                 peer = PeerConnection(ip, port, self._torrent_metadata.info_hash, self._peer_id, self.torrent_storage)
                 self._peers.append(peer)
-                self._pieces_requested_by_peer[peer] = set()
+                self._pieces_requested_from_peer[peer] = set()
 
     async def connect_to_unconnected_peers(self) -> None:
+        """Connects to any peers that are not currently connected"""
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
         async with TaskGroup() as tg:
@@ -80,6 +84,7 @@ class PieceManager:
                 tg.create_task(self._connect_to_peer(peer))
 
     async def connect_to_all_peers(self) -> None:
+        """Closes all existing connections and connects to all peers"""
         await self.close_all()
 
         async with self._peers_lock:
@@ -103,12 +108,15 @@ class PieceManager:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
 
     async def close_all(self) -> None:
+        """Closes all peer connections and cancels all ongoing downloads"""
+        await self.stop_downloads()
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
         for peer in peers_snapshot:
             await peer.close()       
 
     async def start_downloads(self):
+        """Starts downloading pieces from peers. If already downloading, it will restart the download process."""
         await self.stop_downloads()
         self._is_downloading = True
         for _ in range(self.MAX_IN_FLIGHT_PIECES):
@@ -124,6 +132,7 @@ class PieceManager:
             self._download_tasks.append(task)
 
     async def stop_downloads(self):
+        """Stops all ongoing downloads and cancels the download tasks"""
         self._is_downloading = False
         for task in self._download_tasks:
             task.cancel()
@@ -133,9 +142,9 @@ class PieceManager:
 
         async with self._requested_pieces_lock:
             self._requested_pieces.clear()
-        async with self._pieces_requested_by_peer_lock:
-            for peer in self._pieces_requested_by_peer:
-                self._pieces_requested_by_peer[peer].clear()
+        async with self._pieces_requested_from_peer_lock:
+            for peer in self._pieces_requested_from_peer:
+                self._pieces_requested_from_peer[peer].clear()
   
     async def stop_seeding(self):
         self._is_seeding = False
@@ -184,14 +193,14 @@ class PieceManager:
                             return
                         continue
 
-                    async with self._pieces_requested_by_peer_lock:    
-                        self._pieces_requested_by_peer[peer].add(piece_index)
+                    async with self._pieces_requested_from_peer_lock:    
+                        self._pieces_requested_from_peer[peer].add(piece_index)
                     
                     
                     piece = await self._download_piece_from_peer(piece_index, peer)
                     if piece is None:
-                        async with self._pieces_requested_by_peer_lock:
-                            self._pieces_requested_by_peer[peer].discard(piece_index)
+                        async with self._pieces_requested_from_peer_lock:
+                            self._pieces_requested_from_peer[peer].discard(piece_index)
                         continue
 
                     if await self._validate_piece(piece_index, piece):
@@ -199,20 +208,20 @@ class PieceManager:
                             self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
                         async with self._requested_pieces_lock:
                             self._requested_pieces.discard(piece_index)
-                        async with self._pieces_requested_by_peer_lock:
-                            self._pieces_requested_by_peer[peer].discard(piece_index)
+                        async with self._pieces_requested_from_peer_lock:
+                            self._pieces_requested_from_peer[peer].discard(piece_index)
                         await self.torrent_storage.add_piece(piece_index, piece)
                         break
                     else:
-                        async with self._pieces_requested_by_peer_lock:
-                            self._pieces_requested_by_peer[peer].discard(piece_index)
+                        async with self._pieces_requested_from_peer_lock:
+                            self._pieces_requested_from_peer[peer].discard(piece_index)
             finally:
                 if piece_index is not None:
                     async with self._requested_pieces_lock:
                         self._requested_pieces.discard(piece_index)
                 if peer is not None:
-                    async with self._pieces_requested_by_peer_lock:
-                        self._pieces_requested_by_peer.get(peer, set()).discard(piece_index)
+                    async with self._pieces_requested_from_peer_lock:
+                        self._pieces_requested_from_peer.get(peer, set()).discard(piece_index)
 
     async def _select_next_piece(self) -> Optional[int]:
         while True:
@@ -276,7 +285,7 @@ class PieceManager:
             
         for peer in peers_snapshot:
             bitfield = await peer.get_bitfield()
-            pending = self._pieces_requested_by_peer.get(peer, set())
+            pending = self._pieces_requested_from_peer.get(peer, set())
             if (
                 bitfield is not None
                 and self._check_bitfield_has_piece(bitfield, piece_index)
