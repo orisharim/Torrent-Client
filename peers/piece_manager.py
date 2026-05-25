@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from operator import is_
 from typing import Optional
 
 from peers import piece
@@ -113,7 +114,8 @@ class PieceManager:
                 await peer.send_handshake()
                 await self._sync_bitfield_with_storage()
                 await peer.send_bitfield(self._bitfield)
-                await peer.send_interested()
+                if self._is_downloading:
+                    await peer.send_interested()
                 await peer.start_message_loop()
 
                 while (await peer.get_bitfield()) is None: # wait for bitfield
@@ -318,6 +320,10 @@ class PieceManager:
         return None
     
     async def _download_piece_from_peer(self, piece_index: int, peer: PeerConnection) -> Optional[Piece]:
+        
+        await peer.send_interested()
+        await peer.wait_for_unchoke()
+        
         piece_length = await self._get_piece_length(piece_index)
         piece = Piece(piece_index, piece_length)
 

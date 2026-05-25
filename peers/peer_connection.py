@@ -11,7 +11,8 @@ class PeerConnection:
     PROTOCOL_LENGTH = len(PROTOCOL_NAME)
     DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 10.0
-
+    WAIT_FOR_UNCHOKE_INTERVAL = 0.1
+    
     MESSAGE_CHOKE = 0
     MESSAGE_UNCHOKE = 1
     MESSAGE_INTERESTED = 2
@@ -224,6 +225,12 @@ class PeerConnection:
         except Exception:
             return
 
+    async def wait_for_unchoke(self) -> None:
+        while True:
+            if not await self.is_choked():
+                return
+            await asyncio.sleep(self.WAIT_FOR_UNCHOKE_INTERVAL)
+    
     async def _send_piece(self, piece_index: int, begin: int, length: int) -> None:
         if piece_index < 0 or piece_index >= self.storage.total_piece_count:
             return
