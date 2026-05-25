@@ -103,6 +103,8 @@ class PieceManager:
                 await peer.start_message_loop()
                 while (await peer.get_bitfield()) is None: # wait for bitfield
                     await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
+        except asyncio.TimeoutError:
+            peer.close()
         
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
@@ -286,11 +288,7 @@ class PieceManager:
         for peer in peers_snapshot:
             bitfield = await peer.get_bitfield()
             pending = self._pieces_requested_from_peer.get(peer, set())
-            if (
-                bitfield is not None
-                and self._check_bitfield_has_piece(bitfield, piece_index)
-                and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER
-            ):
+            if (bitfield is not None and self._check_bitfield_has_piece(bitfield, piece_index) and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER):
                 return peer
 
         return None
