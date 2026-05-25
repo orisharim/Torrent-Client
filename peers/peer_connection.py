@@ -54,12 +54,29 @@ class PeerConnection:
 
     async def close(self) -> None:
         if self.writer is None:
+            self.reader = None
+            self.remote_peer_id = None
+            async with self._bitfield_lock:
+                self.bitfield = None
             return
         await self.stop_message_loop()
         self.writer.close()
         await self.writer.wait_closed() #make sure the connection is fully closed
         self.reader = None
         self.writer = None
+        self.remote_peer_id = None
+        async with self._bitfield_lock:
+            self.bitfield = None
+        self.bitfield = None
+        self.remote_peer_id = None
+        async with self._choked_lock:
+            self.choked = True
+        async with self._interested_lock:
+            self.interested = False
+        async with self._pending_blocks_lock:
+            self._pending_blocks.clear()
+            self._pending_blocks_queue.clear()
+        
 
     #async version of __enter__ and __exit__ ``
     async def __aenter__(self) -> "PeerConnection":
@@ -131,6 +148,9 @@ class PeerConnection:
         async with self._choked_lock:
             self.choked = False
         await self.send_message(self.MESSAGE_UNCHOKE)
+
+    async def send_bitfield(self, bitfield: bytes) -> None:
+        await self.send_message(self.MESSAGE_BITFIELD, bitfield)
 
     async def send_have(self, piece_index: int) -> None:
         payload = struct.pack(">I", piece_index)
