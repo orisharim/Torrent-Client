@@ -41,7 +41,7 @@ class PieceManager:
             self._pieces_requested_from_peer[peer] = set()
 
 
-        self._bitfield: bytes = b""  # bitfield of pieces we have
+        self._bitfield: bytes = self.generate_empty_bitfield()  
         self._requested_pieces: set[int] = set()
 
         self._is_downloading = False
@@ -73,6 +73,17 @@ class PieceManager:
                 self._peers.append(peer)
                 self._pieces_requested_from_peer[peer] = set()
 
+    async def _sync_bitfield_with_storage(self) -> None:
+        bitfield = await self.generate_empty_bitfield()
+        async with self.torrent_storage._downloaded_pieces_lock:
+            downloaded_piece_indexes = list(self.torrent_storage.downloaded_pieces.keys())
+
+        for piece_index in downloaded_piece_indexes:
+            bitfield = self._set_piece_in_bitfield(bitfield, piece_index)
+
+        async with self._bitfield_lock:
+            self._bitfield = bitfield
+
     async def connect_to_unconnected_peers(self) -> None:
         """Connects to any peers that are not currently connected"""
         async with self._peers_lock:
@@ -100,12 +111,16 @@ class PieceManager:
             async with asyncio.timeout(self.CONNECTION_TIMEOUT):
                 await peer.connect()
                 await peer.send_handshake()
+                await self._sync_bitfield_with_storage()
+                await peer.send_bitfield(self._bitfield)
+                await peer.send_interested()
                 await peer.start_message_loop()
+
                 while (await peer.get_bitfield()) is None: # wait for bitfield
                     await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
         except asyncio.TimeoutError:
-            peer.close()
-        
+            await peer.close()
+
         except Exception as e:
             print(f"Failed to connect to peer {peer.host}:{peer.port}: {e}")
 
@@ -213,6 +228,15 @@ class PieceManager:
                         async with self._pieces_requested_from_peer_lock:
                             self._pieces_requested_from_peer[peer].discard(piece_index)
                         await self.torrent_storage.add_piece(piece_index, piece)
+                        async with self._peers_lock:
+                            peers_snapshot = list(self._peers)
+                        #annouce to the peers we have the new piece
+                        announcement_tasks = []
+                        for connected_peer in peers_snapshot:
+                            if await connected_peer.is_connected():
+                                announcement_tasks.append(connected_peer.send_have(piece_index))
+                        if announcement_tasks:
+                            await asyncio.gather(*announcement_tasks, return_exceptions=True)
                         break
                     else:
                         async with self._pieces_requested_from_peer_lock:
@@ -378,4 +402,7 @@ class PieceManager:
             return default_piece_length
 
         return last_piece_length
+    
+    async def generate_empty_bitfield(self) -> bytes:
+        return b"\x00" * ((self._total_piece_count + 7) // 8)
 

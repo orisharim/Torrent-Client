@@ -53,12 +53,6 @@ class PeerConnection:
             )
 
     async def close(self) -> None:
-        if self.writer is None:
-            self.reader = None
-            self.remote_peer_id = None
-            async with self._bitfield_lock:
-                self.bitfield = None
-            return
         await self.stop_message_loop()
         self.writer.close()
         await self.writer.wait_closed() #make sure the connection is fully closed
@@ -67,8 +61,6 @@ class PeerConnection:
         self.remote_peer_id = None
         async with self._bitfield_lock:
             self.bitfield = None
-        self.bitfield = None
-        self.remote_peer_id = None
         async with self._choked_lock:
             self.choked = True
         async with self._interested_lock:
@@ -76,7 +68,7 @@ class PeerConnection:
         async with self._pending_blocks_lock:
             self._pending_blocks.clear()
             self._pending_blocks_queue.clear()
-        
+
 
     #async version of __enter__ and __exit__ ``
     async def __aenter__(self) -> "PeerConnection":
