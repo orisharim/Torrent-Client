@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { useLanguage } from "../../context/LanguageContext";
 
@@ -10,6 +10,31 @@ type Torrent = {
   speed: number;
   status: "Downloading" | "Paused" | "Completed" | "Seeding";
   health: string;
+};
+
+const editableStatuses = ["Downloading", "Paused", "Seeding"] as const;
+const statusPriority: Record<Torrent["status"], number> = {
+  Downloading: 0,
+  Seeding: 1,
+  Paused: 2,
+  Completed: 3,
+};
+
+const formatEstimatedTime = (torrent: Torrent) => {
+  if (torrent.status !== "Downloading" || torrent.speed <= 0 || torrent.progress >= 100) {
+    return "—";
+  }
+
+  const remainingGb = torrent.size * (1 - torrent.progress / 100);
+  const remainingMb = remainingGb * 1024;
+  const seconds = Math.max(0, Math.round(remainingMb / torrent.speed));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
 };
 
 export const TorrentTable = () => {
@@ -76,11 +101,20 @@ export const TorrentTable = () => {
     setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
   };
 
+  const updateTorrentStatus = (id: number, status: Torrent["status"]) => {
+    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status } : torrent)));
+  };
+
   const pauseSelected = () => {
     setTorrents((prev) =>
       prev.map((torrent) => (selected.has(torrent.id) && torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent))
     );
   };
+
+  const sortedTorrents = useMemo(
+    () => [...torrents].sort((a, b) => statusPriority[a.status] - statusPriority[b.status]),
+    [torrents]
+  );
 
   const allSelected = torrents.length > 0 && selected.size === torrents.length;
   const someSelected = selected.size > 0 && !allSelected;
@@ -118,7 +152,7 @@ export const TorrentTable = () => {
       )}
 
       <div className="overflow-y-auto max-h-120">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
           <TableHead
             allSelected={allSelected}
             someSelected={someSelected}
@@ -126,7 +160,7 @@ export const TorrentTable = () => {
             stopAllTorrents={stopAllTorrents}
           />
           <tbody>
-            {torrents.map((torrent, index) => (
+            {sortedTorrents.map((torrent, index) => (
               <TableRow
                 key={torrent.id}
                 index={index}
@@ -136,6 +170,7 @@ export const TorrentTable = () => {
                 onPause={pauseTorrent}
                 onResume={resumeTorrent}
                 onAskDelete={(id) => setPendingDelete([id])}
+                onUpdateStatus={updateTorrentStatus}
               />
             ))}
           </tbody>
@@ -182,7 +217,7 @@ const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: 
   return (
   <thead>
     <tr className="bg-blue-50 dark:bg-blue-950/60 text-xs font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide border-b border-blue-100 dark:border-blue-900">
-      <th className="px-4 py-3 w-8">
+      <th className="px-4 py-3" style={{ width: "2%" }}>
         <input
           type="checkbox"
           checked={allSelected}
@@ -191,15 +226,15 @@ const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: 
           className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
         />
       </th>
-      <th className="text-left px-4 py-3">{t("table.name")}</th>
-      <th className="text-left px-4 py-3">{t("table.size")}</th>
-      <th className="text-left px-4 py-3 w-48">{t("table.progress")}</th>
-      <th className="text-left px-4 py-3">{t("table.speed")}</th>
-      <th className="text-left px-4 py-3">{t("table.status")}</th>
-      <th className="text-left px-4 py-3">{t("table.health")}</th>
-      <th className="text-left px-4 py-3">{t("table.actions")}</th>
-      <th className="px-4 py-3">
-        <button
+      <th className="text-left px-4 py-3" style={{ width: "25%" }}>{t("table.name")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.size")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "18%" }}>{t("table.progress")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "8%" }}>{t("table.speed")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.eta")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.status")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "8%" }}>{t("table.health")}</th>
+      <th className="text-left px-4 py-3" style={{ width: "9%" }}>
+         <button
           onClick={stopAllTorrents}
           className="flex items-center gap-1.5 rounded-full bg-red-50 dark:bg-red-900/30 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
         >
@@ -207,6 +242,7 @@ const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: 
           {t("torrent.stopAll")}
         </button>
       </th>
+   
     </tr>
   </thead>
   );
@@ -235,10 +271,12 @@ type TableRowProps = {
   onPause: (id: number) => void;
   onResume: (id: number) => void;
   onAskDelete: (id: number) => void;
+  onUpdateStatus: (id: number, status: Torrent["status"]) => void;
 };
 
-const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume, onAskDelete }: TableRowProps) => {
+const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume, onAskDelete, onUpdateStatus }: TableRowProps) => {
   const { t } = useLanguage();
+  const [isEditing, setIsEditing] = useState(false);
   return (
   <tr className={`text-sm border-b border-blue-50 dark:border-blue-900/50 last:border-0 transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-900/20 ${selected ? "bg-blue-50 dark:bg-blue-900/30" : index % 2 ? "bg-blue-50/30 dark:bg-blue-950/20" : "bg-white dark:bg-stone-800"}`}>
     <td className="px-4 py-3">
@@ -269,10 +307,39 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
       {torrent.speed > 0 ? `${torrent.speed} MB/s` : "—"}
     </td>
 
+    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
+      {formatEstimatedTime(torrent)}
+    </td>
+
     <td className="px-4 py-3">
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]}`}>
-        {t(`status.${torrent.status.toLowerCase()}`)}
-      </span>
+      {isEditing ? (
+        <select
+          autoFocus
+          value={torrent.status}
+          onChange={(event) => {
+            onUpdateStatus(torrent.id, event.target.value as Torrent["status"]);
+            setIsEditing(false);
+          }}
+          onBlur={() => setIsEditing(false)}
+          className="w-full rounded-full border border-blue-200 dark:border-blue-700 bg-white dark:bg-stone-800 text-xs font-medium px-2.5 py-1 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          {editableStatuses.map((status) => (
+            <option key={status} value={status}>{t(`status.${status.toLowerCase()}`)}</option>
+          ))}
+        </select>
+      ) : torrent.status === "Completed" ? (
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]}`}>
+          {t(`status.${torrent.status.toLowerCase()}`)}
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]} hover:ring-1 hover:ring-blue-300 dark:hover:ring-blue-800 transition-all`}
+        >
+          {t(`status.${torrent.status.toLowerCase()}`)}
+        </button>
+      )}
     </td>
 
     <td className="px-4 py-3">

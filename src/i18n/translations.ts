@@ -4,7 +4,7 @@ export const translations: Record<Language, Record<string, string>> = {
   English: {
     "nav.home": "Home", "nav.torrent": "Torrent", "nav.network": "Network", "nav.devices": "Devices", "nav.settings": "Settings",
     "toolbar.addTorrent": "Add Torrent", "toolbar.magnet": "Magnet", "toolbar.stop": "Stop", "toolbar.remove": "Remove", "toolbar.search": "Search...",
-    "table.name": "Name", "table.size": "Size", "table.progress": "Progress", "table.speed": "Speed", "table.status": "Status", "table.health": "Health", "table.actions": "Actions",
+    "table.name": "Name", "table.size": "Size", "table.progress": "Progress", "table.speed": "Speed", "table.eta": "ETA", "table.status": "Status", "table.health": "Health", "table.actions": "Actions",
     "status.downloading": "Downloading", "status.paused": "Paused", "status.completed": "Completed", "status.seeding": "Seeding",
     "health.perfect": "Perfect", "health.excellent": "Excellent", "health.good": "Good", "health.medium": "Medium", "health.low": "Low",
     "torrent.pause": "Pause", "torrent.resume": "Resume", "torrent.delete": "Delete", "torrent.stopAll": "Stop All", "torrent.clear": "Clear",
@@ -50,7 +50,7 @@ export const translations: Record<Language, Record<string, string>> = {
   Hebrew: {
     "nav.home": "בית", "nav.torrent": "טורנט", "nav.network": "רשת", "nav.devices": "מכשירים", "nav.settings": "הגדרות",
     "toolbar.addTorrent": "הוסף טורנט", "toolbar.magnet": "מגנט", "toolbar.stop": "עצור", "toolbar.remove": "הסר", "toolbar.search": "חיפוש...",
-    "table.name": "שם", "table.size": "גודל", "table.progress": "התקדמות", "table.speed": "מהירות", "table.status": "סטטוס", "table.health": "בריאות", "table.actions": "פעולות",
+    "table.name": "שם", "table.size": "גודל", "table.progress": "התקדמות", "table.speed": "מהירות", "table.eta": "זמן משוער", "table.status": "סטטוס", "table.health": "בריאות", "table.actions": "פעולות",
     "status.downloading": "מוריד", "status.paused": "מושהה", "status.completed": "הושלם", "status.seeding": "מפיץ",
     "health.perfect": "מושלם", "health.excellent": "מצוין", "health.good": "טוב", "health.medium": "בינוני", "health.low": "נמוך",
     "torrent.pause": "השהה", "torrent.resume": "המשך", "torrent.delete": "מחק", "torrent.stopAll": "עצור הכל", "torrent.clear": "נקה",
@@ -96,7 +96,7 @@ export const translations: Record<Language, Record<string, string>> = {
   Spanish: {
     "nav.home": "Inicio", "nav.torrent": "Torrent", "nav.network": "Red", "nav.devices": "Dispositivos", "nav.settings": "Ajustes",
     "toolbar.addTorrent": "Agregar Torrent", "toolbar.magnet": "Magnet", "toolbar.stop": "Detener", "toolbar.remove": "Eliminar", "toolbar.search": "Buscar...",
-    "table.name": "Nombre", "table.size": "Tamaño", "table.progress": "Progreso", "table.speed": "Velocidad", "table.status": "Estado", "table.health": "Salud", "table.actions": "Acciones",
+    "table.name": "Nombre", "table.size": "Tamaño", "table.progress": "Progreso", "table.speed": "Velocidad", "table.eta": "ETA", "table.status": "Estado", "table.health": "Salud", "table.actions": "Acciones",
     "status.downloading": "Descargando", "status.paused": "Pausado", "status.completed": "Completado", "status.seeding": "Sembrando",
     "health.perfect": "Perfecto", "health.excellent": "Excelente", "health.good": "Bueno", "health.medium": "Medio", "health.low": "Bajo",
     "torrent.pause": "Pausar", "torrent.resume": "Reanudar", "torrent.delete": "Eliminar", "torrent.stopAll": "Detener Todo", "torrent.clear": "Limpiar",
@@ -142,7 +142,7 @@ export const translations: Record<Language, Record<string, string>> = {
   French: {
     "nav.home": "Accueil", "nav.torrent": "Torrent", "nav.network": "Réseau", "nav.devices": "Appareils", "nav.settings": "Paramètres",
     "toolbar.addTorrent": "Ajouter un Torrent", "toolbar.magnet": "Aimant", "toolbar.stop": "Arrêter", "toolbar.remove": "Supprimer", "toolbar.search": "Rechercher...",
-    "table.name": "Nom", "table.size": "Taille", "table.progress": "Progression", "table.speed": "Vitesse", "table.status": "Statut", "table.health": "Santé", "table.actions": "Actions",
+    "table.name": "Nom", "table.size": "Taille", "table.progress": "Progression", "table.speed": "Vitesse", "table.eta": "ETA", "table.status": "Statut", "table.health": "Santé", "table.actions": "Actions",
     "status.downloading": "Téléchargement", "status.paused": "En pause", "status.completed": "Terminé", "status.seeding": "Partage",
     "health.perfect": "Parfait", "health.excellent": "Excellent", "health.good": "Bon", "health.medium": "Moyen", "health.low": "Faible",
     "torrent.pause": "Pause", "torrent.resume": "Reprendre", "torrent.delete": "Supprimer", "torrent.stopAll": "Tout Arrêter", "torrent.clear": "Effacer",
@@ -188,7 +188,7 @@ export const translations: Record<Language, Record<string, string>> = {
   German: {
     "nav.home": "Startseite", "nav.torrent": "Torrent", "nav.network": "Netzwerk", "nav.devices": "Geräte", "nav.settings": "Einstellungen",
     "toolbar.addTorrent": "Torrent hinzufügen", "toolbar.magnet": "Magnet", "toolbar.stop": "Stopp", "toolbar.remove": "Entfernen", "toolbar.search": "Suchen...",
-    "table.name": "Name", "table.size": "Größe", "table.progress": "Fortschritt", "table.speed": "Geschwindigkeit", "table.status": "Status", "table.health": "Gesundheit", "table.actions": "Aktionen",
+    "table.name": "Name", "table.size": "Größe", "table.progress": "Fortschritt", "table.speed": "Geschwindigkeit", "table.eta": "ETA", "table.status": "Status", "table.health": "Gesundheit", "table.actions": "Aktionen",
     "status.downloading": "Herunterladen", "status.paused": "Pausiert", "status.completed": "Abgeschlossen", "status.seeding": "Seeden",
     "health.perfect": "Perfekt", "health.excellent": "Ausgezeichnet", "health.good": "Gut", "health.medium": "Mittel", "health.low": "Niedrig",
     "torrent.pause": "Pausieren", "torrent.resume": "Fortsetzen", "torrent.delete": "Löschen", "torrent.stopAll": "Alle Stoppen", "torrent.clear": "Löschen",

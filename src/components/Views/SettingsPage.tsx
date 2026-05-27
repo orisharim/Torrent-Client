@@ -8,7 +8,6 @@ import {
   Palette,
   X,
 } from "lucide-react";
-import { useTheme, type Theme } from "../../context/ThemeContext";
 import { useLanguage, type Language } from "../../context/LanguageContext";
 import Button from "../UI/Button";
 
@@ -96,7 +95,6 @@ type SettingsPageProps = {
 };
 
 export const SettingsPage = ({ onClose }: SettingsPageProps) => {
-  const { theme, setTheme } = useTheme();
   const { language, setLanguage, t } = useLanguage();
   const [activeSection, setActiveSection] = useState<Section>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
@@ -190,26 +188,20 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     {["English", "Hebrew", "Spanish", "French", "German"].map((l) => <option key={l}>{l}</option>)}
                   </select>
                 </Row>
-                <Row label={t("settings.theme")} sub={t("settings.themeSub")}>
-                  <select
-                    value={theme}
-                    onChange={(e) => setTheme(e.target.value as Theme)}
-                    className={inputCls}
-                  >
-                    {["System default", "Light", "Dark"].map((t) => <option key={t}>{t}</option>)}
-                  </select>
-                </Row>
               </SectionCard>
             )}
 
             {activeSection === "downloads" && (
-              <SectionCard title={t("settings.downloads")}>
+              <SectionCard title={t("settings.downloads")}> 
                 <Row label={t("settings.saveLocation")} sub={settings.savePath}>
                   <Button text={t("settings.browse")} action={() => {}} />
                 </Row>
                 <Row label={t("settings.downloadLimit")} sub={t("settings.unlimited")}>
                   <div className="flex items-center gap-1.5">
-                    <input type="number" min={0} value={settings.downloadLimit}
+                    <input
+                      type="number"
+                      min={0}
+                      value={settings.downloadLimit}
                       onChange={(e) => update("downloadLimit", Number(e.target.value))}
                       className={`w-20 text-right ${inputCls}`}
                     />
@@ -218,7 +210,10 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 </Row>
                 <Row label={t("settings.uploadLimit")} sub={t("settings.unlimited")}>
                   <div className="flex items-center gap-1.5">
-                    <input type="number" min={0} value={settings.uploadLimit}
+                    <input
+                      type="number"
+                      min={0}
+                      value={settings.uploadLimit}
                       onChange={(e) => update("uploadLimit", Number(e.target.value))}
                       className={`w-20 text-right ${inputCls}`}
                     />

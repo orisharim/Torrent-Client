@@ -1,3 +1,16 @@
 @import "tailwindcss";
 
+button,
+a,
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+select,
+textarea,
+[role="button"],
+[role="link"],
+[tabindex="0"] {
+  cursor: pointer;
+}
+
 @custom-variant dark (&:is(.dark, .dark *));

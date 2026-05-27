@@ -62,52 +62,10 @@ export const HomePage = () => {
         ))}
       </div>
 
-      <div className="w-full border border-blue-200 dark:border-blue-800 rounded-xl overflow-hidden shadow-sm bg-white dark:bg-stone-800">
-        <div className="px-4 py-3 border-b border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2">
-            <FileDown className="w-4 h-4" />
-            {t("home.recentTorrents")}
-          </h2>
-          <span className="text-xs text-stone-500 dark:text-stone-400">
-            {recentTorrents.length} {t("common.items")}
-          </span>
-        </div>
+      
 
-        <div className="overflow-y-auto max-h-80">
-          <table className="w-full text-sm">
-            <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
-              <tr className="text-left text-stone-500 dark:text-stone-400">
-                <th className="px-4 py-3 font-medium">{t("table.name")}</th>
-                <th className="px-4 py-3 font-medium">{t("table.size")}</th>
-                <th className="px-4 py-3 font-medium">{t("table.status")}</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {recentTorrents.map((torrent, index) => (
-                <tr
-                  key={torrent.id}
-                  className={`border-b border-blue-50 dark:border-blue-900/50 last:border-b-0 transition ${
-                    index % 2 === 1 ? "bg-blue-50/40 dark:bg-blue-900/10" : "bg-white dark:bg-stone-800"
-                  } hover:bg-blue-50 dark:hover:bg-blue-900/20`}
-                >
-                  <td className="px-4 py-4 font-medium text-stone-800 dark:text-stone-100">
-                    {torrent.name}
-                  </td>
-                  <td className="px-4 py-4 text-stone-600 dark:text-stone-300">
-                    {torrent.size}
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className="inline-flex rounded-full bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
-                      {torrent.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        
+      
     </div>
   );
 };
