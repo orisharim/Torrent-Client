@@ -5,13 +5,14 @@ import {
   Wifi,
   Lock,
   SlidersHorizontal,
-  Palette,
+  Languages,
   X,
 } from "lucide-react";
 import { useLanguage, type Language } from "../../context/LanguageContext";
 import Button from "../UI/Button";
+import Toggle from "../UI/Toggle";
 
-type Section = "general" | "appearance" | "downloads" | "connection" | "privacy" | "advanced";
+type Section = "general" | "language" | "downloads" | "connection" | "privacy" | "advanced";
 
 type AppSettings = {
   startOnStartup: boolean;
@@ -51,23 +52,6 @@ const defaultSettings: AppSettings = {
   maxPeersPerTorrent: 50,
 };
 
-const Toggle = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus:outline-none ${
-      checked ? "bg-blue-500" : "bg-stone-300 dark:bg-stone-600"
-    }`}
-  >
-    <span
-      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ${
-        checked ? "translate-x-4" : "translate-x-1"
-      }`}
-    />
-  </button>
-);
 
 const Row = ({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) => (
   <div className="flex items-center justify-between px-5 py-3 border-b border-blue-50 dark:border-blue-900/50 last:border-b-0">
@@ -102,7 +86,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
     { id: "general",    label: t("settings.general"),    icon: <SettingsIcon size={15} /> },
-    { id: "appearance", label: t("settings.appearance"), icon: <Palette size={15} /> },
+    { id: "language",   label: t("settings.language"),   icon: <Languages size={15} /> },
     { id: "downloads",  label: t("settings.downloads"),  icon: <Download size={15} /> },
     { id: "connection", label: t("settings.connection"), icon: <Wifi size={15} /> },
     { id: "privacy",    label: t("settings.privacy"),    icon: <Lock size={15} /> },
@@ -177,8 +161,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
               </>
             )}
 
-            {activeSection === "appearance" && (
-              <SectionCard title={t("settings.appearance")}>
+            {activeSection === "language" && (
+              <SectionCard title={t("settings.language")}>
                 <Row label={t("settings.language")}>
                   <select
                     value={language}
