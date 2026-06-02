@@ -21,7 +21,7 @@ class PieceManager:
     MAX_IN_FLIGHT_BLOCKS_PER_PIECE = 6
     MAX_BLOCK_RETRIES = 3
 
-    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata, download_path: str) -> None:
+    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata: Torrent, download_path: str) -> None:
         self._torrent_metadata = torrent_metadata
         self._peer_id = peer_id
         self._total_piece_count = len(torrent_metadata.pieces)
@@ -29,7 +29,7 @@ class PieceManager:
         self.torrent_storage = TorrentStorage(
             piece_length = torrent_metadata.piece_length,
             total_piece_count = self._total_piece_count,
-            files=torrent_metadata.files,
+            files=torrent_metadata.files_info,
             base_path=download_path,
         )
 
