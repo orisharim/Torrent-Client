@@ -3,7 +3,7 @@ from typing import Optional
 import asyncio
 import fcntl
 from .piece import Piece
-from .peer_connection import PeerConnection
+DEFAULT_BLOCK_LENGTH = 16 * 1024
 
 
 class TorrentStorage:
@@ -38,7 +38,8 @@ class TorrentStorage:
     
     def _get_piece_location(self, piece_index: int) -> tuple[int, int]:
         start_offset = piece_index * self.piece_length
-        return start_offset, start_offset + self.piece_length
+        piece_length = self.get_piece_length(piece_index)
+        return start_offset, start_offset + piece_length
     
     def _get_file_spans_for_piece(self, piece_index: int) -> list[tuple[Path, int, int]]:
         """
@@ -93,11 +94,11 @@ class TorrentStorage:
         for idx in range(self.total_piece_count):
             data = self._read_piece_from_disk(idx)
             if data:
-                blocks = []
-                for i in range(0, len(data), PeerConnection.DEFAULT_BLOCK_LENGTH):
-                    block = data[i:i + PeerConnection.DEFAULT_BLOCK_LENGTH]
-                    blocks.append((idx, i, block))
-                piece = Piece(blocks)
+                piece_length = len(data)
+                piece = Piece(idx, piece_length)
+                for i in range(0, len(data), DEFAULT_BLOCK_LENGTH):
+                    block = data[i:i + DEFAULT_BLOCK_LENGTH]
+                    piece.add_block(i, block)
                 async with self._downloaded_pieces_lock:
                     self.downloaded_pieces[idx] = piece
     

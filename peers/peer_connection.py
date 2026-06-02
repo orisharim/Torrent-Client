@@ -45,6 +45,8 @@ class PeerConnection:
         self._interested_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._bitfield_lock = asyncio.Lock()
+        self._pending_uploads: dict[tuple[int,int], asyncio.Task] = {}
+        self._pending_uploads_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         if self.reader is None or self.writer is None:
@@ -69,6 +71,13 @@ class PeerConnection:
         async with self._pending_blocks_lock:
             self._pending_blocks.clear()
             self._pending_blocks_queue.clear()
+        async with self._pending_uploads_lock:
+            for task in list(self._pending_uploads.values()):
+                try:
+                    task.cancel()
+                except Exception:
+                    pass
+            self._pending_uploads.clear()
 
 
     #async version of __enter__ and __exit__ ``
@@ -216,13 +225,21 @@ class PeerConnection:
                     await self._incoming_pieces.put(parsed)
                 elif message_id == self.MESSAGE_REQUEST:
                     # parsed is (piece_index, begin, length)
-                    asyncio.create_task(self._send_piece(*parsed))
+                    task = asyncio.create_task(self._send_piece(*parsed))
+                    async with self._pending_uploads_lock:
+                        try:
+                            piece_index, begin, length = parsed
+                            self._pending_uploads[(piece_index, begin)] = task
+                        except Exception:
+                            pass
                 elif message_id == self.MESSAGE_BITFIELD:
                     pass
                 elif message_id == self.MESSAGE_HAVE:
                     # parsed is piece_index
                     pass
-        except Exception:
+        except Exception as e:
+            # log and exit message loop on unexpected errors
+            print(f"PeerConnection message loop exiting for {self.host}:{self.port}: {e}")
             return
 
     async def wait_for_unchoke(self) -> None:
@@ -246,7 +263,13 @@ class PeerConnection:
         if data is None:
             return
         payload = struct.pack(">II", piece_index, begin) + data
-        await self.send_message(self.MESSAGE_PIECE, payload)        
+        try:
+            await self.send_message(self.MESSAGE_PIECE, payload)
+        finally:
+            # cleanup pending upload record if present
+            key = (piece_index, begin)
+            async with self._pending_uploads_lock:
+                self._pending_uploads.pop(key, None)
 
     async def is_choked(self) -> bool:
         async with self._choked_lock:
@@ -279,9 +302,33 @@ class PeerConnection:
         if len(payload) != 4:
             raise ValueError("invalid have payload")
         (piece_index,) = struct.unpack(">I", payload)
+        # Update bitfield to reflect that remote peer has this piece
+        byte_index = piece_index // 8
+        bit_offset = piece_index % 8
+        mask = 1 << (7 - bit_offset)
+        async with self._bitfield_lock:
+            if self.bitfield is None:
+                # create a bitfield large enough to hold this piece
+                self.bitfield = b"\x00" * (byte_index + 1)
+            elif byte_index >= len(self.bitfield):
+                self.bitfield += b"\x00" * (byte_index - len(self.bitfield) + 1)
+
+            self.bitfield = (
+                self.bitfield[:byte_index]
+                + bytes([self.bitfield[byte_index] | mask])
+                + self.bitfield[byte_index + 1:]
+            )
+
         return piece_index
 
     async def _on_bitfield(self, payload: bytes) -> bytes:
+        # Normalize bitfield length to storage's total_piece_count
+        expected_len = (self.storage.total_piece_count + 7) // 8
+        if len(payload) < expected_len:
+            payload = payload + b"\x00" * (expected_len - len(payload))
+        elif len(payload) > expected_len:
+            payload = payload[:expected_len]
+
         async with self._bitfield_lock:
             self.bitfield = payload
         return payload
@@ -307,6 +354,11 @@ class PeerConnection:
         if len(payload) != 12:
             raise ValueError("invalid cancel payload")
         piece_index, begin, length = struct.unpack(">III", payload)
+        key = (piece_index, begin)
+        async with self._pending_uploads_lock:
+            task = self._pending_uploads.pop(key, None)
+            if task is not None:
+                task.cancel()
         return piece_index, begin, length
 
     async def _on_unknown(self, payload: bytes) -> bytes:

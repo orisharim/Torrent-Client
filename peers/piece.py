@@ -1,7 +1,5 @@
 from typing import Optional
 
-from peers.peer_connection import PeerConnection
-
 
 class Piece:
     def __init__(self, index: int, length: int):

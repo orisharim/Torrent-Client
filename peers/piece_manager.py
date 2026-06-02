@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from operator import is_
 from typing import Optional
-
-from peers import piece
 from peers.peer_connection import PeerConnection
 from peers.piece import Piece
 from peers.torrent_storage import TorrentStorage
@@ -75,7 +72,7 @@ class PieceManager:
                 self._pieces_requested_from_peer[peer] = set()
 
     async def _sync_bitfield_with_storage(self) -> None:
-        bitfield = await self.generate_empty_bitfield()
+        bitfield = self.generate_empty_bitfield()
         async with self.torrent_storage._downloaded_pieces_lock:
             downloaded_piece_indexes = list(self.torrent_storage.downloaded_pieces.keys())
 
@@ -159,10 +156,24 @@ class PieceManager:
             await asyncio.gather(*self._download_tasks, return_exceptions=True)
         self._download_tasks.clear()
 
+        # notify connected peers that we are no longer interested
+        async with self._peers_lock:
+            peers_snapshot = list(self._peers)
+
+        announcement_tasks = []
+        for connected_peer in peers_snapshot:
+            if await connected_peer.is_connected():
+                try:
+                    announcement_tasks.append(connected_peer.send_not_interested())
+                except Exception:
+                    pass
+        if announcement_tasks:
+            await asyncio.gather(*announcement_tasks, return_exceptions=True)
+
         async with self._requested_pieces_lock:
             self._requested_pieces.clear()
         async with self._pieces_requested_from_peer_lock:
-            for peer in self._pieces_requested_from_peer:
+            for peer in list(self._pieces_requested_from_peer.keys()):
                 self._pieces_requested_from_peer[peer].clear()
   
     async def stop_seeding(self):
@@ -310,11 +321,16 @@ class PieceManager:
     async def _get_peer_for_piece(self, piece_index: int) -> Optional[PeerConnection]:
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
-            
+
         for peer in peers_snapshot:
             bitfield = await peer.get_bitfield()
-            pending = self._pieces_requested_from_peer.get(peer, set())
-            if (bitfield is not None and self._check_bitfield_has_piece(bitfield, piece_index) and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER):
+            async with self._pieces_requested_from_peer_lock:
+                pending = set(self._pieces_requested_from_peer.get(peer, set()))
+            if (
+                bitfield is not None
+                and self._check_bitfield_has_piece(bitfield, piece_index)
+                and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER
+            ):
                 return peer
 
         return None
@@ -327,30 +343,93 @@ class PieceManager:
         piece_length = await self._get_piece_length(piece_index)
         piece = Piece(piece_index, piece_length)
 
-        block_size = max(1, piece_length // self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
-        block_ranges = []
-        for offset in range(0, piece_length, block_size):
-            block_ranges.append((offset, min(block_size, piece_length - offset)))
+        # Use a reasonable block size (default from PeerConnection) instead of tiny blocks
+        block_size = min(PeerConnection.DEFAULT_BLOCK_LENGTH, piece_length)
+        block_ranges = [(offset, min(block_size, piece_length - offset)) for offset in range(0, piece_length, block_size)]
 
-        for block_offset, block_length in block_ranges:
-            retries = 0
-            while retries < self.MAX_BLOCK_RETRIES:
+        from collections import deque
+
+        to_request = deque(block_ranges)
+        outstanding: dict[int, asyncio.Task] = {}
+        task_to_offset: dict[asyncio.Task, int] = {}
+        retries: dict[int, int] = {}
+
+        pipeline_size = max(1, self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
+
+        while to_request or outstanding:
+            # send more requests up to pipeline size
+            while len(outstanding) < pipeline_size and to_request:
+                offset, length = to_request.popleft()
+                rcount = retries.get(offset, 0)
+                if rcount >= self.MAX_BLOCK_RETRIES:
+                    print(f"Failed to download block {offset} of piece {piece_index} from peer {peer.host}:{peer.port} after {self.MAX_BLOCK_RETRIES} retries")
+                    return None
                 try:
-                    await peer.request_block(piece_index, block_offset, block_length)
-                    block_data = await asyncio.wait_for(
-                        peer.read_block(piece_index, block_offset, block_length),
-                        timeout=self.BLOCK_DOWNLOAD_TIMEOUT,
-                    )
+                    await peer.request_block(piece_index, offset, length)
+                    task = asyncio.create_task(peer.read_block(piece_index, offset, length))
+                    outstanding[offset] = task
+                    task_to_offset[task] = offset
+                    retries.setdefault(offset, 0)
+                except Exception as e:
+                    retries[offset] = retries.get(offset, 0) + 1
+                    print(f"Error requesting block {offset} of piece {piece_index} from peer {peer.host}:{peer.port}: {e}")
+                    # requeue for retry
+                    to_request.append((offset, length))
+
+            if not outstanding:
+                # nothing outstanding and nothing to request (shouldn't happen), wait briefly
+                await asyncio.sleep(0.1)
+                continue
+
+            # wait for at least one block to arrive
+            done, pending = await asyncio.wait(
+                list(outstanding.values()),
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=self.BLOCK_DOWNLOAD_TIMEOUT,
+            )
+
+            if not done:
+                # timed out waiting for any block: retry all outstanding
+                for off, task in list(outstanding.items()):
+                    task.cancel()
+                    retries[off] = retries.get(off, 0) + 1
+                    if retries[off] < self.MAX_BLOCK_RETRIES:
+                        # find length for this offset and requeue
+                        length = next((l for o, l in block_ranges if o == off), None)
+                        if length is not None:
+                            to_request.append((off, length))
+                    else:
+                        print(f"Block {off} of piece {piece_index} exceeded retry limit")
+                        return None
+                outstanding.clear()
+                task_to_offset.clear()
+                continue
+
+            for finished in done:
+                off = task_to_offset.get(finished)
+                try:
+                    block_data = finished.result()
                     if block_data is None:
                         raise Exception("Failed to receive block data")
-                    piece.add_block(block_offset, block_data)
-                    break
+                    piece.add_block(off, block_data)
                 except Exception as e:
-                    print(f"Error downloading block {block_offset} of piece {piece_index} from peer {peer.host}:{peer.port}: {e}")
-                    retries += 1
-            else:
-                print(f"Failed to download block {block_offset} of piece {piece_index} from peer {peer.host}:{peer.port} after {self.MAX_BLOCK_RETRIES} retries")
-                return None
+                    retries[off] = retries.get(off, 0) + 1
+                    print(f"Error downloading block {off} of piece {piece_index} from peer {peer.host}:{peer.port}: {e}")
+                    if retries[off] < self.MAX_BLOCK_RETRIES:
+                        # requeue for retry
+                        length = next((l for o, l in block_ranges if o == off), None)
+                        if length is not None:
+                            to_request.append((off, length))
+                    else:
+                        print(f"Failed to download block {off} of piece {piece_index} from peer {peer.host}:{peer.port} after {self.MAX_BLOCK_RETRIES} retries")
+                        return None
+                finally:
+                    # cleanup finished task
+                    if finished in task_to_offset:
+                        task_to_offset.pop(finished, None)
+                    outstanding.pop(off, None)
+
+        # all blocks downloaded
 
         return piece
     
@@ -387,7 +466,58 @@ class PieceManager:
         return piece_hash == expected_hash
     
     async def _validate_all_pieces(self) -> bool:
-        pass
+        all_valid = True
+        async with self.torrent_storage._downloaded_pieces_lock:
+            existing = set(self.torrent_storage.downloaded_pieces.keys())
+
+        for piece_index in range(self._total_piece_count):
+            data = self.torrent_storage._read_piece_from_disk(piece_index)
+            if data is None:
+                # missing piece on disk
+                async with self._bitfield_lock:
+                    # clear bit if set
+                    if self._check_bitfield_has_piece(self._bitfield, piece_index):
+                        # clear bit
+                        byte_index = piece_index // 8
+                        mask = ~(1 << (7 - (piece_index % 8))) & 0xFF
+                        self._bitfield = (
+                            self._bitfield[:byte_index]
+                            + bytes([self._bitfield[byte_index] & mask])
+                            + self._bitfield[byte_index + 1:]
+                        )
+                all_valid = False
+                continue
+
+            piece_hash = sha1(data).digest()
+            expected = self._torrent_metadata.pieces[piece_index]
+            if piece_hash != expected:
+                all_valid = False
+                async with self._bitfield_lock:
+                    if self._check_bitfield_has_piece(self._bitfield, piece_index):
+                        byte_index = piece_index // 8
+                        mask = ~(1 << (7 - (piece_index % 8))) & 0xFF
+                        self._bitfield = (
+                            self._bitfield[:byte_index]
+                            + bytes([self._bitfield[byte_index] & mask])
+                            + self._bitfield[byte_index + 1:]
+                        )
+                async with self.torrent_storage._downloaded_pieces_lock:
+                    self.torrent_storage.downloaded_pieces.pop(piece_index, None)
+            else:
+                # mark as downloaded and set bit
+                async with self._bitfield_lock:
+                    if not self._check_bitfield_has_piece(self._bitfield, piece_index):
+                        self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
+                async with self.torrent_storage._downloaded_pieces_lock:
+                    if piece_index not in self.torrent_storage.downloaded_pieces:
+                        # construct Piece object
+                        from peers.piece import Piece as _Piece
+                        p = _Piece(piece_index, len(data))
+                        for i in range(0, len(data), PeerConnection.DEFAULT_BLOCK_LENGTH):
+                            p.add_block(i, data[i:i + PeerConnection.DEFAULT_BLOCK_LENGTH])
+                        self.torrent_storage.downloaded_pieces[piece_index] = p
+
+        return all_valid
 
     async def _get_piece_length(self, piece_index: int) -> int:
         default_piece_length = self._torrent_metadata.piece_length
@@ -409,6 +539,6 @@ class PieceManager:
 
         return last_piece_length
     
-    async def generate_empty_bitfield(self) -> bytes:
+    def generate_empty_bitfield(self) -> bytes:
         return b"\x00" * ((self._total_piece_count + 7) // 8)
 
