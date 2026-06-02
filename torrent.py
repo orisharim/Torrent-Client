@@ -29,17 +29,16 @@ class Torrent:
         # run parsing pipeline
         self._parse()
 
-    # Step 1: read file
     def _read_file(self, path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
 
-    # Step 2: decode bencode
+    # decode bencode
     def _decode(self):
         data, _ = decode(self._raw)
         return data
 
-    # Step 3: extract fields
+    # extract fields
     def _parse(self):
         self._extract_main_fields()
         self._extract_info_fields()
@@ -54,15 +53,21 @@ class Torrent:
         self.piece_length = self.info[b'piece length']
         self.pieces_blob = self.info[b'pieces']
 
-        # single-file torrent for now
-        self.length = self.info.get(b'length')
+        # Check for multi-file torrent
+        if b'files' in self.info:
+            self.files = self.info[b'files']
+            self.files_info = [(file[b'path'], file[b'length']) for file in self.files]
+        else:
+            # in case of single-file torrent
+            self.length = self.info.get(b'length')
+            self.files = None
+            self.files_info = [(self.info.get(b'name'), self.length)] if self.length else []
 
-    # Step 4: compute info_hash
     def _compute_info_hash(self):
         info_bytes = self._raw[self.info_start:self.info_end]
         self.info_hash = hashlib.sha1(info_bytes).digest()
 
-    # Step 5: split pieces blob into list of 20-byte hashes for easier access
+    # split pieces blob into list of 20-byte hashes for easier access
     def _split_pieces(self):
         blob = self.pieces_blob
         self.pieces = [
@@ -76,6 +81,6 @@ class Torrent:
             "announce": self.announce,
             "piece_length": self.piece_length,
             "num_pieces": len(self.pieces),
-            "length": self.length,
+            "files_info": self.files_info,
             "info_hash": None if self.info_hash is None else self.info_hash.hex()
         }
