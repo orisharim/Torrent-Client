@@ -56,12 +56,12 @@ class Torrent:
         # Check for multi-file torrent
         if b'files' in self.info:
             self.files = self.info[b'files']
-            self.file_info = [(file[b'path'], file[b'length']) for file in self.files]
+            self.files_info = [(file[b'path'], file[b'length']) for file in self.files]
         else:
             # in case of single-file torrent
             self.length = self.info.get(b'length')
             self.files = None
-            self.file_info = [(self.info.get(b'name'), self.length)] if self.length else []
+            self.files_info = [(self.info.get(b'name'), self.length)] if self.length else []
 
     def _compute_info_hash(self):
         info_bytes = self._raw[self.info_start:self.info_end]
@@ -81,6 +81,6 @@ class Torrent:
             "announce": self.announce,
             "piece_length": self.piece_length,
             "num_pieces": len(self.pieces),
-            "file_info": self.file_info,
+            "files_info": self.files_info,
             "info_hash": None if self.info_hash is None else self.info_hash.hex()
         }
