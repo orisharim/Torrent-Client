@@ -8,6 +8,8 @@ from peers.torrent_storage import TorrentStorage
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
+from collections import deque
+
 
 class PieceManager:
 
@@ -326,11 +328,7 @@ class PieceManager:
             bitfield = await peer.get_bitfield()
             async with self._pieces_requested_from_peer_lock:
                 pending = set(self._pieces_requested_from_peer.get(peer, set()))
-            if (
-                bitfield is not None
-                and self._check_bitfield_has_piece(bitfield, piece_index)
-                and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER
-            ):
+            if (bitfield is not None and self._check_bitfield_has_piece(bitfield, piece_index) and len(pending) < self.MAX_IN_FLIGHT_PIECES_PER_PEER):
                 return peer
 
         return None
@@ -347,7 +345,6 @@ class PieceManager:
         block_size = min(PeerConnection.DEFAULT_BLOCK_LENGTH, piece_length)
         block_ranges = [(offset, min(block_size, piece_length - offset)) for offset in range(0, piece_length, block_size)]
 
-        from collections import deque
 
         to_request = deque(block_ranges)
         outstanding: dict[int, asyncio.Task] = {}
@@ -430,7 +427,6 @@ class PieceManager:
                     outstanding.pop(off, None)
 
         # all blocks downloaded
-
         return piece
     
     def _check_bitfield_has_piece(self, bitfield: bytes, piece_index: int) -> bool:
