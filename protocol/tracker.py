@@ -1,7 +1,7 @@
 import requests
 import struct
 import socket
-from bencode import decode
+from protocol.bencode import decode
 
 def build_tracker_url(torrent, peer_id: bytes, port: int = 6881,
                       uploaded=0, downloaded=0, left=None):

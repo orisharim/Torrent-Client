@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 import asyncio
 import fcntl
-from .piece import Piece
+from protocol.piece import Piece
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
 

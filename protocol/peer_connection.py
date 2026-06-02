@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 from collections import deque
 import fcntl
 
-from peers.torrent_storage import TorrentStorage
+from protocol.torrent_storage import TorrentStorage
 
 class PeerConnection:
     PROTOCOL_NAME = b"BitTorrent protocol"

@@ -1,5 +1,5 @@
 import hashlib
-from bencode import decode, encode
+from protocol.bencode import decode, encode
 
 
 class Torrent:
