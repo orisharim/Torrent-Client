@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from typing import Optional
-from peers.peer_connection import PeerConnection
-from peers.piece import Piece
-from peers.torrent_storage import TorrentStorage
-
+from peer_connection import PeerConnection
+from piece import Piece
+from torrent_storage import TorrentStorage
+from torrent import Torrent
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
@@ -46,7 +46,6 @@ class PieceManager:
 
         self._is_downloading = False
         self._is_seeding = False
-
         self._peers_lock = asyncio.Lock()
         self._bitfield_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
@@ -506,9 +505,7 @@ class PieceManager:
                         self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
                 async with self.torrent_storage._downloaded_pieces_lock:
                     if piece_index not in self.torrent_storage.downloaded_pieces:
-                        # construct Piece object
-                        from peers.piece import Piece as _Piece
-                        p = _Piece(piece_index, len(data))
+                        p = Piece(piece_index, len(data))
                         for i in range(0, len(data), PeerConnection.DEFAULT_BLOCK_LENGTH):
                             p.add_block(i, data[i:i + PeerConnection.DEFAULT_BLOCK_LENGTH])
                         self.torrent_storage.downloaded_pieces[piece_index] = p
