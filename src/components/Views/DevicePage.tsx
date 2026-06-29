@@ -1,18 +1,14 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Monitor, Smartphone, Tablet, Power, Wifi, WifiOff } from "lucide-react";
 import Button from "../UI/Button";
 import DataTable, { tableRowCls, thCls } from "../UI/DataTable";
 import IconBox from "../UI/IconBox";
 import PageHeader from "../UI/PageHeader";
 import { useLanguage } from "../../context/LanguageContext";
+import * as deviceService from "../../services/deviceService";
+import type { Device } from "../../services/types";
 
-const devices = [
-  { id: 1, name: "My PC",     type: "Desktop", status: "Online",  lastSeen: "Now"         },
-  { id: 2, name: "iPhone 13", type: "Phone",   status: "Offline", lastSeen: "2 hours ago" },
-  { id: 3, name: "Tablet",    type: "Tablet",  status: "Online",  lastSeen: "5 min ago"   },
-];
-
-const getIcon = (type: string) => {
+const getIcon = (type: Device["type"]) => {
   if (type === "Desktop") return <Monitor className="w-5 h-5" />;
   if (type === "Phone") return <Smartphone className="w-5 h-5" />;
   return <Tablet className="w-5 h-5" />;
@@ -20,6 +16,15 @@ const getIcon = (type: string) => {
 
 export const DevicePage = () => {
   const { t } = useLanguage();
+  const [devices, setDevices] = useState<Device[]>([]);
+
+  useEffect(() => {
+    deviceService.getDevices().then(setDevices);
+  }, []);
+
+  const handleDisconnect = (id: number) => {
+    deviceService.disconnectDevice(id); // REPLACE: update UI state on success
+  };
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
@@ -65,7 +70,7 @@ export const DevicePage = () => {
                   <Button
                     text={t("devices.disconnect")}
                     icon={<Power className="w-4 h-4" />}
-                    action={() => {}}
+                    action={() => handleDisconnect(device.id)}
                     variant="danger"
                   />
                 </td>

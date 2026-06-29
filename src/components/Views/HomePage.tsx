@@ -1,19 +1,28 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Plus, Link, Download, Upload, Activity, Share2 } from "lucide-react";
 import Button from "../UI/Button";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
 import { useLanguage } from "../../context/LanguageContext";
+import * as statsService from "../../services/statsService";
+import type { HomeStats } from "../../services/types";
 
 export const HomePage = () => {
   const { t } = useLanguage();
+  const [homeStats, setHomeStats] = useState<HomeStats | null>(null);
 
-  const stats = [
-    { label: t("home.download"), value: "1.8 MB/s", icon: <Download className="w-5 h-5" /> },
-    { label: t("home.upload"),   value: "0.3 MB/s", icon: <Upload className="w-5 h-5" />   },
-    { label: t("home.active"),   value: "3",         icon: <Activity className="w-5 h-5" /> },
-    { label: t("home.seeding"),  value: "2",         icon: <Share2 className="w-5 h-5" />   },
-  ];
+  useEffect(() => {
+    statsService.getHomeStats().then(setHomeStats);
+  }, []);
+
+  const stats = homeStats
+    ? [
+        { label: t("home.download"), value: homeStats.downloadSpeed,           icon: <Download className="w-5 h-5" /> },
+        { label: t("home.upload"),   value: homeStats.uploadSpeed,             icon: <Upload className="w-5 h-5" />   },
+        { label: t("home.active"),   value: homeStats.activeTorrents,          icon: <Activity className="w-5 h-5" /> },
+        { label: t("home.seeding"),  value: homeStats.seedingTorrents,         icon: <Share2 className="w-5 h-5" />   },
+      ]
+    : [];
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">

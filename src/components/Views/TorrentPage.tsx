@@ -1,35 +1,45 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { FileDown, Users, Gauge, Radio } from "lucide-react";
 import DataTable, { tableRowCls, thCls } from "../UI/DataTable";
 import IconBox from "../UI/IconBox";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
 import { useLanguage } from "../../context/LanguageContext";
-
-const tableData = [
-  { id: 0, files: "ubuntu.iso",       info: "75% Downloaded", peers: "45 peers", trackers: "tracker.ubuntu.com", speed: "1.8 MB/s" },
-  { id: 1, files: "movie.mp4",        info: "Paused",         peers: "12 peers", trackers: "tracker.movie.net",  speed: "0 MB/s"   },
-  { id: 2, files: "game.zip",         info: "Seeding",        peers: "80 peers", trackers: "tracker.game.org",   speed: "0.3 MB/s" },
-  { id: 3, files: "music_album.flac", info: "80% Downloaded", peers: "30 peers", trackers: "tracker.music.com",  speed: "2.4 MB/s" },
-];
+import * as torrentService from "../../services/torrentService";
+import type { TorrentDetail, TorrentPageStats } from "../../services/types";
 
 export const TorrentPage = () => {
   const { t } = useLanguage();
+  const [details, setDetails] = useState<TorrentDetail[]>([]);
+  const [pageStats, setPageStats] = useState<TorrentPageStats | null>(null);
+
+  useEffect(() => {
+    torrentService.getTorrentDetails().then(setDetails);
+    torrentService.getTorrentPageStats().then(setPageStats);
+  }, []);
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <PageHeader title={t("torrents.title")} subtitle={t("torrents.subtitle")} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard label={t("torrents.total")} value={tableData.length} />
-        <StatCard label={t("torrents.peers")} value="167" valueClassName="text-blue-600 dark:text-blue-400" />
-        <StatCard label={t("torrents.speed")} value="4.5 MB/s" valueClassName="text-green-600 dark:text-green-400" />
+        <StatCard label={t("torrents.total")} value={details.length} />
+        <StatCard
+          label={t("torrents.peers")}
+          value={pageStats ? pageStats.totalPeers : "—"}
+          valueClassName="text-blue-600 dark:text-blue-400"
+        />
+        <StatCard
+          label={t("torrents.speed")}
+          value={pageStats ? pageStats.currentSpeed : "—"}
+          valueClassName="text-green-600 dark:text-green-400"
+        />
       </div>
 
       <DataTable
         icon={<FileDown className="w-4 h-4" />}
         title={t("torrents.list")}
-        count={tableData.length}
+        count={details.length}
         countLabel={t("common.items")}
       >
         <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
@@ -42,7 +52,7 @@ export const TorrentPage = () => {
           </tr>
         </thead>
         <tbody>
-          {tableData.map((row, index) => (
+          {details.map((row, index) => (
             <tr key={row.id} className={tableRowCls(index)}>
               <td className="px-4 py-4">
                 <div className="flex items-center gap-3">

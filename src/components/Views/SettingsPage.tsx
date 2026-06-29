@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Settings as SettingsIcon,
   Download,
@@ -11,47 +11,10 @@ import {
 import { useLanguage, type Language } from "../../context/LanguageContext";
 import Button from "../UI/Button";
 import Toggle from "../UI/Toggle";
+import * as settingsService from "../../services/settingsService";
+import type { AppSettings, ProxyType } from "../../services/types";
 
 type Section = "general" | "language" | "downloads" | "connection" | "privacy" | "advanced";
-
-type AppSettings = {
-  startOnStartup: boolean;
-  minimizeToTray: boolean;
-  language: string;
-  savePath: string;
-  downloadLimit: number;
-  uploadLimit: number;
-  autoStart: boolean;
-  notifyOnComplete: boolean;
-  listeningPort: number;
-  enableUPnP: boolean;
-  enableDHT: boolean;
-  proxy: string;
-  enableEncryption: boolean;
-  anonymousMode: boolean;
-  maxConnections: number;
-  maxPeersPerTorrent: number;
-};
-
-const defaultSettings: AppSettings = {
-  startOnStartup: true,
-  minimizeToTray: true,
-  language: "English",
-  savePath: "/Users/user/Downloads",
-  downloadLimit: 0,
-  uploadLimit: 50,
-  autoStart: true,
-  notifyOnComplete: true,
-  listeningPort: 6881,
-  enableUPnP: true,
-  enableDHT: true,
-  proxy: "None",
-  enableEncryption: true,
-  anonymousMode: false,
-  maxConnections: 200,
-  maxPeersPerTorrent: 50,
-};
-
 
 const Row = ({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) => (
   <div className="flex items-center justify-between px-5 py-3 border-b border-blue-50 dark:border-blue-900/50 last:border-b-0">
@@ -81,8 +44,13 @@ type SettingsPageProps = {
 export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const { language, setLanguage, t } = useLanguage();
   const [activeSection, setActiveSection] = useState<Section>("general");
-  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [settings, setSettings] = useState<AppSettings>(settingsService.DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
+
+  // Load persisted settings from service on mount
+  useEffect(() => {
+    settingsService.getSettings().then(setSettings);
+  }, []);
 
   const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
     { id: "general",    label: t("settings.general"),    icon: <SettingsIcon size={15} /> },
@@ -98,12 +66,15 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   };
 
   const handleSave = () => {
+    settingsService.saveSettings(settings); // REPLACE: await + error handling
     setSaved(true);
     setTimeout(() => { setSaved(false); onClose(); }, 1200);
   };
 
   const handleReset = () => {
-    if (confirm(t("settings.resetConfirm"))) setSettings(defaultSettings);
+    if (confirm(t("settings.resetConfirm"))) {
+      settingsService.resetSettings().then(setSettings); // REPLACE: uses returned defaults
+    }
   };
 
   return (
@@ -111,7 +82,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-[700px] h-[80vh] flex flex-col overflow-hidden">
+      <div className="bg-stone-50 dark:bg-stone-900 rounded-2xl shadow-2xl w-175 h-[80vh] flex flex-col overflow-hidden">
 
         <div className="flex items-center justify-between px-5 py-4 bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900 shrink-0">
           <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
@@ -176,7 +147,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
             )}
 
             {activeSection === "downloads" && (
-              <SectionCard title={t("settings.downloads")}> 
+              <SectionCard title={t("settings.downloads")}>
                 <Row label={t("settings.saveLocation")} sub={settings.savePath}>
                   <Button text={t("settings.browse")} action={() => {}} />
                 </Row>
@@ -228,7 +199,11 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   <Toggle checked={settings.enableDHT} onChange={(v) => update("enableDHT", v)} />
                 </Row>
                 <Row label={t("settings.proxy")}>
-                  <select value={settings.proxy} onChange={(e) => update("proxy", e.target.value)} className={inputCls}>
+                  <select
+                    value={settings.proxy}
+                    onChange={(e) => update("proxy", e.target.value as ProxyType)}
+                    className={inputCls}
+                  >
                     {["None", "SOCKS5", "HTTP"].map((p) => <option key={p}>{p}</option>)}
                   </select>
                 </Row>

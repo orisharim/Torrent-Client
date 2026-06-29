@@ -1,19 +1,26 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Plus, RefreshCw, Download, Rss } from "lucide-react";
 import Button from "../UI/Button";
 import DataTable, { tableRowCls, thCls } from "../UI/DataTable";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
 import { useLanguage } from "../../context/LanguageContext";
-
-const feeds = [
-  { id: 1, source: "Ubuntu Releases", name: "ubuntu-24.04.iso",     size: "2.5 GB", date: "Today"      },
-  { id: 2, source: "Movie Feed",      name: "movie.2026.1080p.mkv", size: "1.4 GB", date: "Yesterday"  },
-  { id: 3, source: "Linux Tools",     name: "linux_tools.tar.gz",   size: "4.7 GB", date: "2 days ago" },
-];
+import * as feedService from "../../services/feedService";
+import type { FeedItem, FeedStats } from "../../services/types";
 
 export const FeedsPage = () => {
   const { t } = useLanguage();
+  const [feeds, setFeeds] = useState<FeedItem[]>([]);
+  const [feedStats, setFeedStats] = useState<FeedStats | null>(null);
+
+  useEffect(() => {
+    feedService.getFeeds().then(setFeeds);
+    feedService.getFeedStats().then(setFeedStats);
+  }, []);
+
+  const handleRefresh = () => {
+    feedService.refreshFeeds().then(setFeeds);
+  };
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
@@ -22,16 +29,24 @@ export const FeedsPage = () => {
         subtitle={t("feeds.subtitle")}
         actions={
           <>
-            <Button text={t("feeds.addFeed")} icon={<Plus size={16} />} action={() => {}} variant="primary" />
-            <Button text={t("feeds.refresh")} icon={<RefreshCw size={16} />} action={() => {}} />
+            <Button text={t("feeds.addFeed")} icon={<Plus size={16} />} action={() => feedService.addFeed("")} variant="primary" />
+            <Button text={t("feeds.refresh")} icon={<RefreshCw size={16} />} action={handleRefresh} />
           </>
         }
       />
 
       <div className="grid grid-cols-3 gap-4">
         <StatCard label={t("feeds.totalFeeds")} value={feeds.length} />
-        <StatCard label={t("feeds.newToday")} value="1" valueClassName="text-blue-600 dark:text-blue-400" />
-        <StatCard label={t("feeds.downloadsReady")} value="3" valueClassName="text-green-600 dark:text-green-400" />
+        <StatCard
+          label={t("feeds.newToday")}
+          value={feedStats ? feedStats.newToday : "—"}
+          valueClassName="text-blue-600 dark:text-blue-400"
+        />
+        <StatCard
+          label={t("feeds.downloadsReady")}
+          value={feedStats ? feedStats.downloadsReady : "—"}
+          valueClassName="text-green-600 dark:text-green-400"
+        />
       </div>
 
       <DataTable
@@ -60,7 +75,10 @@ export const FeedsPage = () => {
               <td className="px-4 py-4 text-stone-600 dark:text-stone-300">{feed.size}</td>
               <td className="px-4 py-4 text-stone-600 dark:text-stone-300">{feed.date}</td>
               <td className="px-4 py-4 text-right">
-                <button className="inline-flex items-center gap-2 rounded-md border border-blue-200 dark:border-blue-700 px-3 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition">
+                <button
+                  onClick={() => feedService.downloadFeedItem(feed.id)}
+                  className="inline-flex items-center gap-2 rounded-md border border-blue-200 dark:border-blue-700 px-3 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition"
+                >
                   <Download className="w-4 h-4" />
                   {t("feeds.download")}
                 </button>

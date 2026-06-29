@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { useLanguage } from "../../context/LanguageContext";
 import { useTorrents, type Torrent } from "../../context/TorrentContext";
+import * as torrentService from "../../services/torrentService";
 
 const editableStatuses = ["Downloading", "Paused", "Seeding"] as const;
 const statusPriority: Record<Torrent["status"], number> = {
@@ -48,25 +49,33 @@ export const TorrentTable = () => {
   };
 
   const pauseTorrent = (id: number) => {
+    torrentService.pauseTorrent(id); // REPLACE: optimistic update, rollback on error
     setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
   };
 
   const stopAllTorrents = () => {
-    setTorrents((prev) => prev.map((torrent) => (torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
+    setTorrents((prev) => prev.map((torrent) => {
+      if (torrent.status !== "Downloading") return torrent;
+      torrentService.pauseTorrent(torrent.id); // REPLACE: batch API call
+      return { ...torrent, status: "Paused", speed: 0 };
+    }));
   };
 
   const resumeTorrent = (id: number) => {
+    torrentService.resumeTorrent(id); // REPLACE: optimistic update, rollback on error
     setTorrents((prev) =>
       prev.map((torrent) => (torrent.id === id && torrent.progress < 100 ? { ...torrent, status: "Downloading", speed: 1.5 } : torrent))
     );
   };
 
   const deleteTorrents = (ids: number[]) => {
+    torrentService.deleteTorrents(ids); // REPLACE: await + error handling
     setTorrents((prev) => prev.filter((torrent) => !ids.includes(torrent.id)));
     setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
   };
 
   const updateTorrentStatus = (id: number, status: Torrent["status"]) => {
+    torrentService.updateTorrentStatus(id, status); // REPLACE: await + error handling
     setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status } : torrent)));
   };
 

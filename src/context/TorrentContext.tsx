@@ -1,24 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import * as torrentService from "../services/torrentService";
+import type { Torrent } from "../services/types";
 
-export type Torrent = {
-  id: number;
-  name: string;
-  size: number;
-  progress: number;
-  speed: number;
-  status: "Downloading" | "Paused" | "Completed" | "Seeding";
-  health: string;
-};
-
-const initialTorrents: Torrent[] = [
-  { id: 0, name: "ubuntu.iso",           size: 2.5,  progress: 75,  speed: 1.8, status: "Downloading", health: "Good"      },
-  { id: 1, name: "movie.mp4",            size: 1.2,  progress: 50,  speed: 0,   status: "Paused",       health: "Medium"    },
-  { id: 2, name: "game.zip",             size: 15.8, progress: 100, speed: 0.3, status: "Seeding",      health: "Excellent" },
-  { id: 3, name: "music_album.flac",     size: 0.9,  progress: 80,  speed: 2.4, status: "Downloading",  health: "Good"      },
-  { id: 4, name: "course_materials.pdf", size: 0.3,  progress: 100, speed: 0,   status: "Completed",    health: "Perfect"   },
-  { id: 5, name: "linux_tools.tar.gz",   size: 4.7,  progress: 60,  speed: 0,   status: "Paused",       health: "Low"       },
-  { id: 6, name: "series_episode.mkv",   size: 2.1,  progress: 30,  speed: 3.1, status: "Downloading",  health: "Medium"    },
-];
+// Re-export so existing imports from this file continue to work
+export type { Torrent } from "../services/types";
 
 type TorrentContextType = {
   torrents: Torrent[];
@@ -35,8 +20,14 @@ const TorrentContext = createContext<TorrentContextType>({
 export const useTorrents = () => useContext(TorrentContext);
 
 export const TorrentProvider = ({ children }: { children: React.ReactNode }) => {
-  const [torrents, setTorrents] = useState<Torrent[]>(initialTorrents);
+  const [torrents, setTorrents] = useState<Torrent[]>([]);
 
+  // Initial load from service — swap torrentService.getTorrents for real API call
+  useEffect(() => {
+    torrentService.getTorrents().then(setTorrents);
+  }, []);
+
+  // Demo simulation — remove this block when connecting real-time API/WebSocket
   useEffect(() => {
     const interval = setInterval(() => {
       setTorrents((prev) =>
@@ -56,6 +47,7 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
   }, []);
 
   const clearCompleted = () => {
+    torrentService.clearCompleted(); // REPLACE: API call
     setTorrents((prev) => prev.filter((t) => t.status !== "Completed"));
   };
 
