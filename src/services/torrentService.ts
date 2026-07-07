@@ -1,29 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
+import { safeCall, withFallback } from "./backend";
+import { DEMO_TORRENTS, DEMO_TORRENT_DETAILS, DEMO_TORRENT_PAGE_STATS, demoAddedTorrent } from "./demoData";
 import type { AddTorrentPayload, Torrent, TorrentDetail, TorrentPageStats, TorrentStatus } from "./types";
 
 export const getTorrents = async (): Promise<Torrent[]> =>
-  invoke<Torrent[]>("get_torrents");
+  withFallback(invoke<Torrent[]>("get_torrents"), () => DEMO_TORRENTS);
 
 export const getTorrentDetails = async (): Promise<TorrentDetail[]> =>
-  invoke<TorrentDetail[]>("get_torrent_details");
+  withFallback(invoke<TorrentDetail[]>("get_torrent_details"), () => DEMO_TORRENT_DETAILS);
 
 export const getTorrentPageStats = async (): Promise<TorrentPageStats> =>
-  invoke<TorrentPageStats>("get_torrent_page_stats");
+  withFallback(invoke<TorrentPageStats>("get_torrent_page_stats"), () => DEMO_TORRENT_PAGE_STATS);
 
-export const addTorrent = async (payload: AddTorrentPayload): Promise<Torrent> =>
-  invoke<Torrent>("add_torrent", { payload });
+export const addTorrent = async (payload: AddTorrentPayload): Promise<Torrent> => {
+  try {
+    return await invoke<Torrent>("add_torrent", { payload });
+  } catch (error) {
+    console.warn("[backend unavailable — using demo fallback]", error);
+    return demoAddedTorrent(payload);
+  }
+};
 
 export const pauseTorrent = async (id: number): Promise<void> =>
-  invoke("pause_torrent", { id });
+  safeCall(invoke("pause_torrent", { id }));
 
 export const resumeTorrent = async (id: number): Promise<void> =>
-  invoke("resume_torrent", { id });
+  safeCall(invoke("resume_torrent", { id }));
 
 export const deleteTorrents = async (ids: number[]): Promise<void> =>
-  invoke("delete_torrents", { ids });
+  safeCall(invoke("delete_torrents", { ids }));
 
 export const updateTorrentStatus = async (id: number, status: TorrentStatus): Promise<void> =>
-  invoke("update_torrent_status", { id, status });
+  safeCall(invoke("update_torrent_status", { id, status }));
 
 export const clearCompleted = async (): Promise<void> =>
-  invoke("clear_completed");
+  safeCall(invoke("clear_completed"));

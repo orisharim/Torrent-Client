@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { Monitor, Smartphone, Tablet, Power, Wifi, WifiOff } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Monitor, Smartphone, Tablet, Power, Wifi, WifiOff, MonitorSmartphone } from "lucide-react";
 import Button from "../UI/Button";
-import DataTable, { tableRowCls, thCls } from "../UI/DataTable";
+import DataTable from "../UI/DataTable";
+import { tableRowCls, thCls } from "../UI/tableStyles";
+import EmptyState from "../UI/EmptyState";
 import IconBox from "../UI/IconBox";
 import PageHeader from "../UI/PageHeader";
 import { useLanguage } from "../../context/LanguageContext";
+import { useUI } from "../../context/UIContext";
 import * as deviceService from "../../services/deviceService";
 import type { Device } from "../../services/types";
 
@@ -16,28 +19,47 @@ const getIcon = (type: Device["type"]) => {
 
 export const DevicePage = () => {
   const { t } = useLanguage();
+  const { showToast } = useUI();
   const [devices, setDevices] = useState<Device[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    deviceService.getDevices().then(setDevices);
+    deviceService.getDevices().then((list) => {
+      setDevices(list);
+      setLoading(false);
+    });
   }, []);
 
   const handleDisconnect = (id: number) => {
-    deviceService.disconnectDevice(id); // REPLACE: update UI state on success
+    deviceService.disconnectDevice(id); // REPLACE: optimistic update, rollback on error
+    setDevices((prev) =>
+      prev.map((device) => (device.id === id ? { ...device, status: "Offline", lastSeen: "Just now" } : device))
+    );
+    showToast(t("devices.disconnected"));
   };
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <PageHeader title={t("devices.title")} subtitle={t("devices.subtitle")} />
 
-      <DataTable title={t("devices.connected")} count={devices.length} countLabel={t("common.devices")}>
+      <DataTable
+        title={t("devices.connected")}
+        count={devices.length}
+        countLabel={t("common.devices")}
+        emptyState={
+          <EmptyState
+            icon={<MonitorSmartphone size={28} />}
+            title={loading ? t("empty.loading") : t("empty.noDevices")}
+          />
+        }
+      >
         <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
-          <tr className="text-left text-stone-500 dark:text-stone-400">
+          <tr className="text-stone-500 dark:text-stone-400">
             <th className={thCls}>{t("devices.device")}</th>
-            <th className={thCls}>{t("devices.type")}</th>
+            <th className={`${thCls} hidden md:table-cell`}>{t("devices.type")}</th>
             <th className={thCls}>{t("devices.status")}</th>
-            <th className={thCls}>{t("devices.lastSeen")}</th>
-            <th className={`${thCls} text-right`}>{t("devices.action")}</th>
+            <th className={`${thCls} hidden md:table-cell`}>{t("devices.lastSeen")}</th>
+            <th className={thCls}>{t("devices.action")}</th>
           </tr>
         </thead>
         <tbody>
@@ -54,9 +76,9 @@ export const DevicePage = () => {
                     </div>
                   </div>
                 </td>
-                <td className="px-4 py-4 text-stone-600 dark:text-stone-300">{device.type}</td>
+                <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">{device.type}</td>
                 <td className="px-4 py-4">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap ${
                     isOnline
                       ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
                       : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
@@ -65,13 +87,14 @@ export const DevicePage = () => {
                     {t(isOnline ? "devices.online" : "devices.offline")}
                   </span>
                 </td>
-                <td className="px-4 py-4 text-stone-600 dark:text-stone-300">{device.lastSeen}</td>
-                <td className="px-4 py-4 text-right">
+                <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">{device.lastSeen}</td>
+                <td className="px-4 py-4">
                   <Button
                     text={t("devices.disconnect")}
                     icon={<Power className="w-4 h-4" />}
                     action={() => handleDisconnect(device.id)}
                     variant="danger"
+                    disabled={!isOnline}
                   />
                 </td>
               </tr>

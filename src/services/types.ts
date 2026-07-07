@@ -32,6 +32,17 @@ export type AddTorrentPayload =
   | { type: "magnet"; uri: string }
   | { type: "file"; fileName: string };
 
+export type SearchResult = {
+  id: number;
+  name: string;
+  size: number; // GB, same convention as Torrent.size
+  seeds: number;
+  peers: number;
+  source: string;
+  health: TorrentHealth;
+  magnet: string;
+};
+
 export type FeedItem = {
   id: number;
   source: string;

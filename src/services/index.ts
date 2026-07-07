@@ -4,3 +4,4 @@ export * as feedService from "./feedService";
 export * as deviceService from "./deviceService";
 export * as settingsService from "./settingsService";
 export * as statsService from "./statsService";
+export * as searchService from "./searchService";

@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
-import { Pause, Play, Trash2 } from "lucide-react";
+import { Download, Pause, Play, Trash2 } from "lucide-react";
 import { useLanguage } from "../../context/LanguageContext";
 import { useTorrents, type Torrent } from "../../context/TorrentContext";
-import * as torrentService from "../../services/torrentService";
+import { useUI } from "../../context/UIContext";
+import { healthStyles, statusStyles } from "../UI/badgeStyles";
+import Button from "../UI/Button";
+import ConfirmDialog from "../UI/ConfirmDialog";
+import EmptyState from "../UI/EmptyState";
 
 const editableStatuses = ["Downloading", "Paused", "Seeding"] as const;
 const statusPriority: Record<Torrent["status"], number> = {
@@ -31,67 +35,28 @@ const formatEstimatedTime = (torrent: Torrent) => {
 
 export const TorrentTable = () => {
   const { t } = useLanguage();
-  const { torrents, setTorrents } = useTorrents();
+  const {
+    torrents, loading,
+    selected, setSelected, toggleSelect,
+    pauseTorrent, resumeTorrent, pauseSelected,
+    deleteTorrents, updateTorrentStatus,
+  } = useTorrents();
+  const { filterText, openAddDialog } = useUI();
 
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<number[]>([]);
 
-  const toggleSelect = (id: number) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
-      return next;
-    });
-  };
+  const filtered = useMemo(() => {
+    const query = filterText.trim().toLowerCase();
+    const matching = query === "" ? torrents : torrents.filter((torrent) => torrent.name.toLowerCase().includes(query));
+    return [...matching].sort((a, b) => statusPriority[a.status] - statusPriority[b.status]);
+  }, [torrents, filterText]);
+
+  const allSelected = filtered.length > 0 && filtered.every((torrent) => selected.has(torrent.id));
+  const someSelected = selected.size > 0 && !allSelected;
 
   const toggleSelectAll = () => {
-    setSelected(selected.size === torrents.length ? new Set() : new Set(torrents.map((torrent) => torrent.id)));
+    setSelected(allSelected ? new Set() : new Set(filtered.map((torrent) => torrent.id)));
   };
-
-  const pauseTorrent = (id: number) => {
-    torrentService.pauseTorrent(id); // REPLACE: optimistic update, rollback on error
-    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
-  };
-
-  const stopAllTorrents = () => {
-    setTorrents((prev) => prev.map((torrent) => {
-      if (torrent.status !== "Downloading") return torrent;
-      torrentService.pauseTorrent(torrent.id); // REPLACE: batch API call
-      return { ...torrent, status: "Paused", speed: 0 };
-    }));
-  };
-
-  const resumeTorrent = (id: number) => {
-    torrentService.resumeTorrent(id); // REPLACE: optimistic update, rollback on error
-    setTorrents((prev) =>
-      prev.map((torrent) => (torrent.id === id && torrent.progress < 100 ? { ...torrent, status: "Downloading", speed: 1.5 } : torrent))
-    );
-  };
-
-  const deleteTorrents = (ids: number[]) => {
-    torrentService.deleteTorrents(ids); // REPLACE: await + error handling
-    setTorrents((prev) => prev.filter((torrent) => !ids.includes(torrent.id)));
-    setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
-  };
-
-  const updateTorrentStatus = (id: number, status: Torrent["status"]) => {
-    torrentService.updateTorrentStatus(id, status); // REPLACE: await + error handling
-    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status } : torrent)));
-  };
-
-  const pauseSelected = () => {
-    setTorrents((prev) =>
-      prev.map((torrent) => (selected.has(torrent.id) && torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent))
-    );
-  };
-
-  const sortedTorrents = useMemo(
-    () => [...torrents].sort((a, b) => statusPriority[a.status] - statusPriority[b.status]),
-    [torrents]
-  );
-
-  const allSelected = torrents.length > 0 && selected.size === torrents.length;
-  const someSelected = selected.size > 0 && !allSelected;
 
   const deleteTitle = pendingDelete.length > 1
     ? t("torrent.confirmDeleteMany").replace("{count}", String(pendingDelete.length))
@@ -100,7 +65,7 @@ export const TorrentTable = () => {
   return (
     <div className="bg-white dark:bg-stone-800 border border-blue-100 dark:border-blue-900 rounded-2xl overflow-hidden shadow-sm">
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 dark:bg-blue-950 border-b border-blue-100 dark:border-blue-900">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 bg-blue-50 dark:bg-blue-950 border-b border-blue-100 dark:border-blue-900">
           <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selected.size} {t("torrent.selected")}</span>
           <button
             onClick={pauseSelected}
@@ -118,62 +83,60 @@ export const TorrentTable = () => {
           </button>
           <button
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs text-blue-400 dark:text-blue-500 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+            className="ms-auto text-xs text-blue-400 dark:text-blue-500 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
           >
             {t("torrent.clear")}
           </button>
         </div>
       )}
 
-      <div className="overflow-y-auto max-h-120">
-        <table className="w-full text-sm table-fixed">
-          <TableHead
-            allSelected={allSelected}
-            someSelected={someSelected}
-            onToggleAll={toggleSelectAll}
-            stopAllTorrents={stopAllTorrents}
-          />
-          <tbody>
-            {sortedTorrents.map((torrent, index) => (
-              <TableRow
-                key={torrent.id}
-                index={index}
-                torrent={torrent}
-                selected={selected.has(torrent.id)}
-                onToggleSelect={toggleSelect}
-                onPause={pauseTorrent}
-                onResume={resumeTorrent}
-                onAskDelete={(id) => setPendingDelete([id])}
-                onUpdateStatus={updateTorrentStatus}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loading ? (
+        <EmptyState title={t("empty.loading")} />
+      ) : torrents.length === 0 ? (
+        <EmptyState
+          icon={<Download size={28} />}
+          title={t("empty.noTorrents")}
+          description={t("empty.noTorrentsSub")}
+          action={<Button text={t("toolbar.addTorrent")} variant="primary" action={() => openAddDialog("magnet")} />}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState title={t("empty.noMatches").replace("{query}", filterText.trim())} />
+      ) : (
+        <div className="overflow-y-auto overflow-x-auto max-h-[40vh]">
+          <table className="w-full text-sm">
+            <TableHead
+              allSelected={allSelected}
+              someSelected={someSelected}
+              onToggleAll={toggleSelectAll}
+            />
+            <tbody>
+              {filtered.map((torrent, index) => (
+                <TableRow
+                  key={torrent.id}
+                  index={index}
+                  torrent={torrent}
+                  selected={selected.has(torrent.id)}
+                  onToggleSelect={toggleSelect}
+                  onPause={pauseTorrent}
+                  onResume={resumeTorrent}
+                  onAskDelete={(id) => setPendingDelete([id])}
+                  onUpdateStatus={updateTorrentStatus}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {pendingDelete.length > 0 && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-stone-800 rounded-2xl shadow-2xl w-80 p-6">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">
-              {deleteTitle}
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">{t("torrent.undone")}</p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setPendingDelete([])}
-                className="px-4 py-2 rounded-full text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-800/60 transition-colors"
-              >
-                {t("torrent.cancel")}
-              </button>
-              <button
-                onClick={() => { deleteTorrents(pendingDelete); setPendingDelete([]); }}
-                className="px-4 py-2 rounded-full text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
-              >
-                {t("torrent.delete")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title={deleteTitle}
+          message={t("torrent.undone")}
+          confirmLabel={t("torrent.delete")}
+          cancelLabel={t("torrent.cancel")}
+          onConfirm={() => { deleteTorrents(pendingDelete); setPendingDelete([]); }}
+          onCancel={() => setPendingDelete([])}
+        />
       )}
     </div>
   );
@@ -183,15 +146,14 @@ type TableHeadProps = {
   allSelected: boolean;
   someSelected: boolean;
   onToggleAll: () => void;
-  stopAllTorrents: () => void;
 };
 
-const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: TableHeadProps) => {
+const TableHead = ({ allSelected, someSelected, onToggleAll }: TableHeadProps) => {
   const { t } = useLanguage();
   return (
   <thead>
     <tr className="bg-blue-50 dark:bg-blue-950/60 text-xs font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide border-b border-blue-100 dark:border-blue-900">
-      <th className="px-4 py-3" style={{ width: "2%" }}>
+      <th className="px-4 py-3 w-10">
         <input
           type="checkbox"
           checked={allSelected}
@@ -200,41 +162,17 @@ const TableHead = ({ allSelected, someSelected, onToggleAll, stopAllTorrents }: 
           className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
         />
       </th>
-      <th className="text-left px-4 py-3" style={{ width: "25%" }}>{t("table.name")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.size")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "18%" }}>{t("table.progress")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "8%" }}>{t("table.speed")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.eta")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "10%" }}>{t("table.status")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "8%" }}>{t("table.health")}</th>
-      <th className="text-left px-4 py-3" style={{ width: "9%" }}>
-         <button
-          onClick={stopAllTorrents}
-          className="flex items-center gap-1.5 rounded-full bg-red-50 dark:bg-red-900/30 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-        >
-          <Pause size={12} />
-          {t("torrent.stopAll")}
-        </button>
-      </th>
-   
+      <th className="text-start px-4 py-3">{t("table.name")}</th>
+      <th className="text-start px-4 py-3 whitespace-nowrap">{t("table.size")}</th>
+      <th className="text-start px-4 py-3 min-w-32">{t("table.progress")}</th>
+      <th className="text-start px-4 py-3 whitespace-nowrap hidden sm:table-cell">{t("table.speed")}</th>
+      <th className="text-start px-4 py-3 whitespace-nowrap hidden lg:table-cell">{t("table.eta")}</th>
+      <th className="text-start px-4 py-3">{t("table.status")}</th>
+      <th className="text-start px-4 py-3 hidden lg:table-cell">{t("table.health")}</th>
+      <th className="text-start px-4 py-3">{t("table.actions")}</th>
     </tr>
   </thead>
   );
-};
-
-const statusStyles: Record<string, string> = {
-  Downloading: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-  Paused:      "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  Completed:   "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
-  Seeding:     "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
-};
-
-const healthStyles: Record<string, string> = {
-  Perfect:   "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
-  Excellent: "bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300",
-  Good:      "bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300",
-  Medium:    "bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300",
-  Low:       "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400",
 };
 
 type TableRowProps = {
@@ -262,26 +200,28 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
       />
     </td>
 
-    <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">{torrent.name}</td>
-    <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{torrent.size} GB</td>
+    <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">
+      <div className="max-w-64 truncate" title={torrent.name}>{torrent.name}</div>
+    </td>
+    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{torrent.size} GB</td>
 
     <td className="px-4 py-3">
       <div className="flex items-center gap-2">
-        <div className="flex-1 bg-blue-100 dark:bg-blue-900/40 rounded-full h-2 overflow-hidden">
+        <div className="flex-1 min-w-16 bg-blue-100 dark:bg-blue-900/40 rounded-full h-2 overflow-hidden">
           <div
             className="bg-blue-500 h-full rounded-full transition-all duration-500"
             style={{ width: `${torrent.progress}%` }}
           />
         </div>
-        <span className="text-xs text-gray-500 dark:text-gray-400 w-8 text-right">{Math.round(torrent.progress)}%</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 w-8 text-end">{Math.round(torrent.progress)}%</span>
       </div>
     </td>
 
-    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
+    <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap hidden sm:table-cell">
       {torrent.speed > 0 ? `${torrent.speed} MB/s` : "—"}
     </td>
 
-    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
+    <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap hidden lg:table-cell">
       {formatEstimatedTime(torrent)}
     </td>
 
@@ -316,7 +256,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
       )}
     </td>
 
-    <td className="px-4 py-3">
+    <td className="px-4 py-3 hidden lg:table-cell">
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${healthStyles[torrent.health] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"}`}>
         {t(`health.${torrent.health.toLowerCase()}`)}
       </span>
@@ -351,7 +291,6 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onPause, onResume,
         </button>
       </div>
     </td>
-    <td />
   </tr>
   );
 };

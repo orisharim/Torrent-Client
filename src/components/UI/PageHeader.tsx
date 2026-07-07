@@ -7,12 +7,12 @@ interface PageHeaderProps {
 }
 
 const PageHeader = ({ title, subtitle, actions }: PageHeaderProps) => (
-  <div className="flex items-center justify-between">
+  <div className="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h1 className="text-2xl font-bold text-stone-800 dark:text-stone-100">{title}</h1>
       <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">{subtitle}</p>
     </div>
-    {actions && <div className="flex gap-2">{actions}</div>}
+    {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
   </div>
 );
 

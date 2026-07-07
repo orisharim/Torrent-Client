@@ -9,10 +9,18 @@ const ThemeContext = createContext<{
 
 export const useTheme = () => useContext(ThemeContext);
 
+const THEME_STORAGE_KEY = "app.theme";
+
+const loadTheme = (): Theme => {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === "Light" || stored === "Dark" || stored === "System default" ? stored : "System default";
+};
+
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
-  const [theme, setTheme] = useState<Theme>("System default");
+  const [theme, setTheme] = useState<Theme>(loadTheme);
 
   useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
     const root = document.documentElement;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 

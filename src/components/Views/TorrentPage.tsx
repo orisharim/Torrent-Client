@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { FileDown, Users, Gauge, Radio } from "lucide-react";
-import DataTable, { tableRowCls, thCls } from "../UI/DataTable";
+import DataTable from "../UI/DataTable";
+import { tableRowCls, thCls } from "../UI/tableStyles";
+import EmptyState from "../UI/EmptyState";
 import IconBox from "../UI/IconBox";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
@@ -12,9 +14,13 @@ export const TorrentPage = () => {
   const { t } = useLanguage();
   const [details, setDetails] = useState<TorrentDetail[]>([]);
   const [pageStats, setPageStats] = useState<TorrentPageStats | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    torrentService.getTorrentDetails().then(setDetails);
+    torrentService.getTorrentDetails().then((rows) => {
+      setDetails(rows);
+      setLoading(false);
+    });
     torrentService.getTorrentPageStats().then(setPageStats);
   }, []);
 
@@ -41,14 +47,20 @@ export const TorrentPage = () => {
         title={t("torrents.list")}
         count={details.length}
         countLabel={t("common.items")}
+        emptyState={
+          <EmptyState
+            icon={<FileDown size={28} />}
+            title={loading ? t("empty.loading") : t("empty.noTorrents")}
+          />
+        }
       >
         <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
-          <tr className="text-left text-stone-500 dark:text-stone-400">
+          <tr className="text-start text-stone-500 dark:text-stone-400">
             <th className={thCls}>{t("torrents.files")}</th>
             <th className={thCls}>{t("torrents.info")}</th>
-            <th className={thCls}>{t("torrents.peers")}</th>
-            <th className={thCls}>{t("torrents.trackers")}</th>
-            <th className={`${thCls} text-right`}>{t("table.speed")}</th>
+            <th className={`${thCls} hidden md:table-cell`}>{t("torrents.peers")}</th>
+            <th className={`${thCls} hidden md:table-cell`}>{t("torrents.trackers")}</th>
+            <th className={thCls}>{t("table.speed")}</th>
           </tr>
         </thead>
         <tbody>
@@ -68,19 +80,19 @@ export const TorrentPage = () => {
                   {row.info}
                 </span>
               </td>
-              <td className="px-4 py-4 text-stone-600 dark:text-stone-300">
+              <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">
                 <span className="inline-flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-stone-400 dark:text-stone-500" />
                   {row.peers}
                 </span>
               </td>
-              <td className="px-4 py-4 text-stone-600 dark:text-stone-300">
+              <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">
                 <span className="inline-flex items-center gap-1.5">
                   <Radio className="w-4 h-4 text-stone-400 dark:text-stone-500" />
                   {row.trackers}
                 </span>
               </td>
-              <td className="px-4 py-4 text-right font-medium text-stone-800 dark:text-stone-100">
+              <td className="px-4 py-4 font-medium text-stone-800 dark:text-stone-100">
                 <span className="inline-flex items-center gap-1.5">
                   <Gauge className="w-4 h-4 text-green-500 dark:text-green-400" />
                   {row.speed}

@@ -1,26 +1,28 @@
-import React from "react";
-import { Grid } from "./Grid";
 import Toolbar from "../ToolBar/Toolbar";
 import { HomePage } from "../Views/HomePage";
 import { TorrentPage } from "../Views/TorrentPage";
 import { FeedsPage } from "../Views/FeedsPage";
 import { DevicePage } from "../Views/DevicePage";
 import { SettingsPage } from "../Views/SettingsPage";
+import { SearchPage } from "../Views/SearchPage";
+import { TorrentTable } from "./TorrentTable";
 import Tabs from "./Tabs";
+import { AddTorrentDialog } from "../Dialogs/AddTorrentDialog";
+import { ToastViewport } from "../UI/Toast";
+import { useUI } from "../../context/UIContext";
 
-type DashboardProps = {
-  page: string;
-  setPage: React.Dispatch<React.SetStateAction<string>>;
-};
+export const Dashboard = () => {
+  const { page, setPage, addDialog } = useUI();
 
-export const Dashboard = ({ page, setPage }: DashboardProps) => {
   return (
     <div className="bg-stone-50 dark:bg-stone-900 min-h-screen w-full">
       <Toolbar />
 
-      <Grid />
+      <div className="px-4 mt-3">
+        <TorrentTable />
+      </div>
 
-      <Tabs setPage={setPage} page={page} />
+      <Tabs />
 
       {page === "home" && <HomePage />}
 
@@ -30,7 +32,13 @@ export const Dashboard = ({ page, setPage }: DashboardProps) => {
 
       {page === "devices" && <DevicePage />}
 
+      {page === "search" && <SearchPage />}
+
       {page === "settings" && <SettingsPage onClose={() => setPage("home")} />}
+
+      {addDialog.open && <AddTorrentDialog />}
+
+      <ToastViewport />
     </div>
   );
 };

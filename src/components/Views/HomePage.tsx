@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Link, Download, Upload, Activity, Share2 } from "lucide-react";
 import Button from "../UI/Button";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
 import { useLanguage } from "../../context/LanguageContext";
+import { useUI } from "../../context/UIContext";
 import * as statsService from "../../services/statsService";
 import type { HomeStats } from "../../services/types";
 
 export const HomePage = () => {
   const { t } = useLanguage();
+  const { openAddDialog } = useUI();
   const [homeStats, setHomeStats] = useState<HomeStats | null>(null);
 
   useEffect(() => {
@@ -31,15 +33,22 @@ export const HomePage = () => {
         subtitle={t("home.subtitle")}
         actions={
           <>
-            <Button text={t("home.addTorrent")} icon={<Plus size={16} />} action={() => {}} variant="primary" />
-            <Button text={t("home.magnet")} icon={<Link size={16} />} action={() => {}} />
+            <Button text={t("home.addTorrent")} icon={<Plus size={16} />} action={() => openAddDialog("magnet")} variant="primary" />
+            <Button text={t("home.magnet")} icon={<Link size={16} />} action={() => openAddDialog("magnet")} />
           </>
         }
       />
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {stats.map((stat) => (
-          <StatCard key={stat.label} label={stat.label} value={stat.value} icon={stat.icon} />
-        ))}
+        {homeStats
+          ? stats.map((stat) => (
+              <StatCard key={stat.label} label={stat.label} value={stat.value} icon={stat.icon} />
+            ))
+          : Array.from({ length: 4 }, (_, index) => (
+              <div
+                key={index}
+                className="h-24 rounded-xl border border-blue-100 dark:border-blue-900 bg-white dark:bg-stone-800 animate-pulse"
+              />
+            ))}
       </div>
     </div>
   );
