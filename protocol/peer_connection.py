@@ -1,14 +1,13 @@
 import asyncio
-import struct
 from typing import Optional, Tuple
 from collections import deque
-import fcntl
+from PeerConnection import peer_protocol_encoder as protocol_encoder
 
 from protocol.torrent_storage import TorrentStorage
 
 class PeerConnection:
-    PROTOCOL_NAME = b"BitTorrent protocol"
-    PROTOCOL_LENGTH = len(PROTOCOL_NAME)
+    # PROTOCOL_NAME = b"BitTorrent protocol"
+    # PROTOCOL_LENGTH = len(PROTOCOL_NAME)
     DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 10.0
     WAIT_FOR_UNCHOKE_INTERVAL = 0.1
@@ -79,7 +78,6 @@ class PeerConnection:
                     pass
             self._pending_uploads.clear()
 
-
     #async version of __enter__ and __exit__ ``
     async def __aenter__(self) -> "PeerConnection":
         await self.connect()
@@ -88,44 +86,29 @@ class PeerConnection:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def send_handshake(self) -> bytes:
+    async def send_handshake(self) -> None:
         await self.connect() #make sure its connected even though it should be already
         if self.writer is None or self.reader is None:
             raise ConnectionError("not connected to peer")
 
-        handshake = struct.pack(
-            ">B19s8s20s20s",
-            self.PROTOCOL_LENGTH,
-            self.PROTOCOL_NAME,
-            b"\x00" * 8,
-            self.info_hash,
-            self.peer_id,
-        )
+        handshake = protocol_encoder.encode_handshake(self.info_hash, self.peer_id)
+        
         async with self._write_lock:
             self.writer.write(handshake)
             await self._drain()
 
         response = await self._read_exactly(68)
-        pstrlen, protocol_name, _reserved, info_hash, peer_id = struct.unpack(
-            ">B19s8s20s20s", response
-        )
 
-        if pstrlen != self.PROTOCOL_LENGTH or protocol_name != self.PROTOCOL_NAME:
-            raise ValueError("invalid BitTorrent handshake from peer")
-        if info_hash != self.info_hash:
-            raise ValueError("peer responded with a different info_hash")
-
-        self.remote_peer_id = peer_id
-        return peer_id
+        _, self.remote_peer_id = protocol_encoder.decode_handshake(response, expected_info_hash=self.info_hash)
 
     async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
         await self.connect()
         if self.writer is None:
             raise ConnectionError("not connected to peer")
         if message_id is None:
-            packet = struct.pack(">I", 0)
+            packet = protocol_encoder.encode_empty_message()
         else:
-            packet = struct.pack(">IB", len(payload) + 1, message_id) + payload
+            packet = protocol_encoder.encode_message(message_id, payload)
 
         async with self._write_lock:
             self.writer.write(packet)
@@ -155,22 +138,22 @@ class PeerConnection:
         await self.send_message(self.MESSAGE_BITFIELD, bitfield)
 
     async def send_have(self, piece_index: int) -> None:
-        payload = struct.pack(">I", piece_index)
+        payload = protocol_encoder.encode_have_payload(piece_index)
         await self.send_message(self.MESSAGE_HAVE, payload)
 
     async def request_block(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
-        payload = struct.pack(">III", piece_index, begin, length)
+        payload = protocol_encoder.encode_block_request_payload(piece_index, begin, length)
         await self.send_message(self.MESSAGE_REQUEST, payload)
 
     async def cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
-        payload = struct.pack(">III", piece_index, begin, length)
+        payload = protocol_encoder.encode_block_request_payload(piece_index, begin, length)
         await self.send_message(self.MESSAGE_CANCEL, payload)
 
     async def read_message(self) -> tuple[Optional[int], Optional[object]]:
         await self.connect()
 
         length_prefix = await self._read_exactly(4)
-        (message_length,) = struct.unpack(">I", length_prefix)
+        message_length = protocol_encoder.decode_length_prefix(length_prefix)
         if message_length == 0:
             return None, None
 
@@ -178,9 +161,8 @@ class PeerConnection:
         
         if message is None or len(message) == 0:
             return None, None
-        
-        message_id = message[0]
-        payload = message[1:]
+
+        message_id, payload = protocol_encoder.decode_message(message)
         
         handler_map = {
             self.MESSAGE_CHOKE: self._on_choke,
@@ -262,7 +244,7 @@ class PeerConnection:
         data = self.storage.read_piece_bytes(piece_index, begin, read_length)
         if data is None:
             return
-        payload = struct.pack(">II", piece_index, begin) + data
+        payload = protocol_encoder.encode_piece_payload(piece_index, begin, data)
         try:
             await self.send_message(self.MESSAGE_PIECE, payload)
         finally:
@@ -299,9 +281,7 @@ class PeerConnection:
             self.interested = False
 
     async def _on_have(self, payload: bytes) -> int:
-        if len(payload) != 4:
-            raise ValueError("invalid have payload")
-        (piece_index,) = struct.unpack(">I", payload)
+        piece_index = protocol_encoder.decode_have_payload(payload)
         # Update bitfield to reflect that remote peer has this piece
         byte_index = piece_index // 8
         bit_offset = piece_index % 8
@@ -322,12 +302,7 @@ class PeerConnection:
         return piece_index
 
     async def _on_bitfield(self, payload: bytes) -> bytes:
-        # Normalize bitfield length to storage's total_piece_count
-        expected_len = (self.storage.total_piece_count + 7) // 8
-        if len(payload) < expected_len:
-            payload = payload + b"\x00" * (expected_len - len(payload))
-        elif len(payload) > expected_len:
-            payload = payload[:expected_len]
+        payload = protocol_encoder.normalize_bitfield_payload(payload, self.storage.total_piece_count)
 
         async with self._bitfield_lock:
             self.bitfield = payload
@@ -338,22 +313,13 @@ class PeerConnection:
             return self.bitfield
 
     async def _on_request(self, payload: bytes) -> tuple[int, int, int]:
-        if len(payload) != 12:
-            raise ValueError("invalid request payload")
-        piece_index, begin, length = struct.unpack(">III", payload)
-        return piece_index, begin, length
+        return protocol_encoder.decode_block_request_payload(payload, "request")
 
     async def _on_piece(self, payload: bytes) -> tuple[int, int, bytes]:
-        if len(payload) < 8:
-            raise ValueError("invalid piece payload")
-        piece_index, begin = struct.unpack(">II", payload[:8])
-        block = payload[8:]
-        return piece_index, begin, block
+        return protocol_encoder.decode_piece_payload(payload)
 
     async def _on_cancel(self, payload: bytes) -> tuple[int, int, int]:
-        if len(payload) != 12:
-            raise ValueError("invalid cancel payload")
-        piece_index, begin, length = struct.unpack(">III", payload)
+        piece_index, begin, length = protocol_encoder.decode_block_request_payload(payload, "cancel")
         key = (piece_index, begin)
         async with self._pending_uploads_lock:
             task = self._pending_uploads.pop(key, None)
