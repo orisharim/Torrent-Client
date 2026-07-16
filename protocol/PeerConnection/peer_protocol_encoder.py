@@ -3,11 +3,6 @@ import struct
 PROTOCOL_NAME = b"BitTorrent protocol"
 PROTOCOL_LENGTH = len(PROTOCOL_NAME)
 HANDSHAKE_FORMAT = ">B19s8s20s20s"
-LENGTH_PREFIX_FORMAT = ">I"
-MESSAGE_HEADER_FORMAT = ">IB"
-HAVE_FORMAT = ">I"
-BLOCK_TRIPLE_FORMAT = ">III"
-PIECE_HEADER_FORMAT = ">II"
 
 
 def _validate_size(data: bytes, expected_size: int, name: str) -> None:
@@ -40,14 +35,14 @@ def unpack_handshake(data: bytes, expected_info_hash: bytes | None = None) -> tu
 
 
 def pack_keepalive() -> bytes:
-    return struct.pack(LENGTH_PREFIX_FORMAT, 0)
+    return struct.pack(">I", 0)
 
 def pack_message(message_id: int, payload: bytes) -> bytes:
-    return struct.pack(MESSAGE_HEADER_FORMAT, len(payload) + 1, message_id) + payload
+    return struct.pack(">IB", len(payload) + 1, message_id) + payload
 
 def unpack_length_prefix(data: bytes) -> int:
-    _validate_size(data, struct.calcsize(LENGTH_PREFIX_FORMAT), "length prefix")
-    (message_length,) = struct.unpack(LENGTH_PREFIX_FORMAT, data)
+    _validate_size(data, struct.calcsize(">I"), "length prefix")
+    (message_length,) = struct.unpack(">I", data)
     return message_length
 
 def split_message_frame(data: bytes) -> tuple[int, bytes]:
@@ -56,11 +51,11 @@ def split_message_frame(data: bytes) -> tuple[int, bytes]:
     return data[0], data[1:]
 
 def pack_have_payload(piece_index: int) -> bytes:
-    return struct.pack(HAVE_FORMAT, piece_index)
+    return struct.pack(">I", piece_index)
 
 def unpack_have_payload(payload: bytes) -> int:
-    _validate_size(payload, struct.calcsize(HAVE_FORMAT), "have payload")
-    (piece_index,) = struct.unpack(HAVE_FORMAT, payload)
+    _validate_size(payload, struct.calcsize(">I"), "have payload")
+    (piece_index,) = struct.unpack(">I", payload)
     return piece_index
 
 def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
@@ -80,20 +75,20 @@ def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
     )
 
 def pack_request_payload(piece_index: int, begin: int, length: int) -> bytes:
-    return struct.pack(BLOCK_TRIPLE_FORMAT, piece_index, begin, length)
+    return struct.pack(">III", piece_index, begin, length)
 
 def unpack_request_payload(payload: bytes, message_name: str) -> tuple[int, int, int]:
-    _validate_size(payload, struct.calcsize(BLOCK_TRIPLE_FORMAT), f"{message_name} payload")
-    return struct.unpack(BLOCK_TRIPLE_FORMAT, payload)
+    _validate_size(payload, struct.calcsize(">III"), f"{message_name} payload")
+    return struct.unpack(">III", payload)
 
 def pack_piece_payload(piece_index: int, begin: int, block: bytes) -> bytes:
-    return struct.pack(PIECE_HEADER_FORMAT, piece_index, begin) + block
+    return struct.pack(">II", piece_index, begin) + block
 
 def unpack_piece_payload(payload: bytes) -> tuple[int, int, bytes]:
-    header_size = struct.calcsize(PIECE_HEADER_FORMAT)
+    header_size = struct.calcsize(">II")
     if len(payload) < header_size:
         raise ValueError("invalid piece payload")
-    piece_index, begin = struct.unpack(PIECE_HEADER_FORMAT, payload[:header_size])
+    piece_index, begin = struct.unpack(">II", payload[:header_size])
     return piece_index, begin, payload[header_size:]
 
 def normalize_bitfield_length(payload: bytes, total_piece_count: int) -> bytes:
