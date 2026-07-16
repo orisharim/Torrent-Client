@@ -1,9 +1,9 @@
 import asyncio
 from typing import Optional, Tuple
-from protocol.PeerConnection import peer_protocol_encoder as protocol_encoder
 
+from protocol.PeerConnection.peer_state import PeerState
+from protocol.PeerConnection import peer_protocol_encoder as protocol_encoder
 from protocol.piece import Piece
-from protocol.peer_state import PeerState
 from protocol.torrent_storage import TorrentStorage
 
 class PeerConnection:
@@ -298,6 +298,8 @@ class PeerConnection:
         piece_length = self.storage.get_piece_length(piece_index)
         piece = Piece(piece_index, piece_length)
         block_size = min(self.DEFAULT_BLOCK_LENGTH, piece_length)
+
+        #limit concurrent block request tasks
         semaphore = asyncio.Semaphore(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
 
         async def download_block(begin: int, length: int) -> tuple[int, Optional[bytes]]:
@@ -307,12 +309,15 @@ class PeerConnection:
 
         tasks = []
 
+        #create concurrent download block tasks
         for begin in range(0, piece_length, block_size):
             tasks.append(asyncio.create_task(download_block(begin, min(block_size, piece_length - begin))))
             
         try:
+            # process block downloads as they complete
             for completed_task in asyncio.as_completed(tasks):
                 begin, block = await completed_task
+                # if a block fails to download cancel the rest and abort the piece download
                 if block is None:
                     for task in tasks:
                         task.cancel()
@@ -320,6 +325,7 @@ class PeerConnection:
                     return None
                 piece.add_block(begin, block)
         finally:
+            #ensure all download tasks are cleaned up
             for task in tasks:
                 task.cancel()
             if tasks:
@@ -330,10 +336,12 @@ class PeerConnection:
     async def _request_block(self, piece_index: int, begin: int, length: int) -> Optional[bytes]:
         key = (piece_index, begin)
 
+        #retry requesting the block up to MAX_BLOCK_RETRIES times in case of failures
         for attempt in range(self.MAX_BLOCK_RETRIES):
             loop = asyncio.get_running_loop()
             future = loop.create_future()
 
+            #register the future for this specific block key to receive data
             async with self._pending_block_futures_lock:
                 self._pending_block_futures[key] = future
 
@@ -362,6 +370,7 @@ class PeerConnection:
         if future is None or future.done():
             return
 
+        # resolve the future with the received block bytes
         future.set_result(block)
 
     async def _read_exactly(self, size: int) -> bytes:
