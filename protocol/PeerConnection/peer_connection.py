@@ -1,10 +1,10 @@
 import asyncio
 from typing import Optional, Tuple
 
-from protocol.PeerConnection.peer_state import PeerState
-from protocol.PeerConnection import peer_protocol_encoder as protocol_encoder
-from protocol.piece import Piece
-from protocol.torrent_storage import TorrentStorage
+from PeerConnection.peer_state import PeerState
+from PeerConnection import peer_protocol_encoder as protocol_encoder
+from piece import Piece
+from torrent_storage import TorrentStorage
 
 class PeerConnection:
     DEFAULT_BLOCK_LENGTH = 16 * 1024
@@ -52,8 +52,12 @@ class PeerConnection:
 
     async def close(self) -> None:
         await self.stop_message_loop()
-        self.writer.close()
-        await self.writer.wait_closed() #make sure the connection is fully closed
+        if self.writer is not None:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed() #make sure the connection is fully closed
+            except Exception:
+                pass
         self.reader = None
         self.writer = None
         self.state.reset()
@@ -108,19 +112,19 @@ class PeerConnection:
             await self._drain()       
 
     async def send_interested(self) -> None:
-        await self.state.set_am_interested(True)
+        self.state.set_am_interested(True)
         await self.send_message(self.MESSAGE_INTERESTED)
 
     async def send_not_interested(self) -> None:
-        await self.state.set_am_interested(False)
+        self.state.set_am_interested(False)
         await self.send_message(self.MESSAGE_NOT_INTERESTED)
 
     async def send_choke(self) -> None:
-        await self.state.set_am_choking(True)
+        self.state.set_am_choking(True)
         await self.send_message(self.MESSAGE_CHOKE)
 
     async def send_unchoke(self) -> None:
-        await self.state.set_am_choking(False)
+        self.state.set_am_choking(False)
         await self.send_message(self.MESSAGE_UNCHOKE)
 
     async def send_bitfield(self, bitfield: bytes) -> None:
@@ -237,38 +241,38 @@ class PeerConnection:
                 self._pending_uploads.pop(key, None)
 
     async def is_choked(self) -> bool:
-        return await self.state.is_peer_choking()
+        return self.state.is_peer_choking()
     
     async def is_interested(self) -> bool:
-        return await self.state.is_am_interested()
+        return self.state.is_am_interested()
 
     async def is_connected(self) -> bool:
         return self.reader is not None and self.writer is not None
 
     async def _on_choke(self, payload: bytes) -> None:
-        await self.state.set_peer_choking(True)
+        self.state.set_peer_choking(True)
 
     async def _on_unchoke(self, payload: bytes) -> None:
-        await self.state.set_peer_choking(False)
+        self.state.set_peer_choking(False)
 
     async def _on_interested(self, payload: bytes) -> None:
-        await self.state.set_peer_interested(True)
+        self.state.set_peer_interested(True)
 
     async def _on_not_interested(self, payload: bytes) -> None:
-        await self.state.set_peer_interested(False)
+        self.state.set_peer_interested(False)
 
     async def _on_have(self, payload: bytes) -> int:
         piece_index = protocol_encoder.unpack_have_payload(payload)
-        await self.state.set_piece_in_bitfield(piece_index, protocol_encoder.set_piece_in_bitfield)
+        self.state.set_piece_in_bitfield(piece_index, protocol_encoder.set_piece_in_bitfield)
         return piece_index
 
     async def _on_bitfield(self, payload: bytes) -> bytes:
         payload = protocol_encoder.normalize_bitfield_length(payload, self.storage.total_piece_count)
-        await self.state.update_bitfield(payload)
+        self.state.update_bitfield(payload)
         return payload
 
     async def get_bitfield(self) -> Optional[bytes]:
-        return await self.state.get_bitfield()
+        return self.state.get_bitfield()
 
     async def _on_request(self, payload: bytes) -> tuple[int, int, int]:
         return protocol_encoder.unpack_request_payload(payload, "request")
@@ -317,11 +321,7 @@ class PeerConnection:
             # process block downloads as they complete
             for completed_task in asyncio.as_completed(tasks):
                 begin, block = await completed_task
-                # if a block fails to download cancel the rest and abort the piece download
                 if block is None:
-                    for task in tasks:
-                        task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
                     return None
                 piece.add_block(begin, block)
         finally:
@@ -346,16 +346,21 @@ class PeerConnection:
                 self._pending_block_futures[key] = future
 
             try:
+                if not await self.is_interested():
+                    await self.send_interested()
+
+                if await self.is_choked():
+                    await asyncio.wait_for(self.wait_for_unchoke(), timeout=self.BLOCK_DOWNLOAD_TIMEOUT)
+
                 await self.request_block(piece_index, begin, length)
                 return await asyncio.wait_for(future, timeout=self.BLOCK_DOWNLOAD_TIMEOUT)
             except Exception:
                 if not future.done():
                     future.cancel()
-                if attempt + 1 >= self.MAX_BLOCK_RETRIES:
-                    raise TimeoutError(
-                        f"failed to download block {begin} of piece {piece_index} from peer {self.host}:{self.port} after {self.MAX_BLOCK_RETRIES} retries"
-                    )
-                await self.cancel_request(piece_index, begin, length)
+                try:
+                    await self.cancel_request(piece_index, begin, length)
+                except Exception:
+                    pass
             finally:
                 async with self._pending_block_futures_lock:
                     self._pending_block_futures.pop(key, None)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from typing import Optional
-from protocol.peer_connection import PeerConnection
-from protocol.piece import Piece
-from protocol.torrent_storage import TorrentStorage
-from protocol.torrent import Torrent
+from PeerConnection.peer_connection import PeerConnection
+from piece import Piece
+from torrent_storage import TorrentStorage
+from torrent import Torrent
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
@@ -14,6 +14,7 @@ class PieceManager:
 
     CONNECTION_TIMEOUT = 10.0
     RECEIVE_BITFIELD_CHECK_INTERVAL = 1.0
+    RECEIVE_BITFIELD_TIMEOUT = 3.0
     MAX_IN_FLIGHT_PIECES = 20
     MAX_IN_FLIGHT_PIECES_PER_PEER = 5
 
@@ -71,7 +72,7 @@ class PieceManager:
     async def _sync_bitfield_with_storage(self) -> None:
         bitfield = self.generate_empty_bitfield()
         async with self.torrent_storage._downloaded_pieces_lock:
-            downloaded_piece_indexes = list(self.torrent_storage.downloaded_pieces.keys())
+            downloaded_piece_indexes = list(self.torrent_storage.downloaded_pieces)
 
         for piece_index in downloaded_piece_indexes:
             bitfield = self._set_piece_in_bitfield(bitfield, piece_index)
@@ -112,11 +113,16 @@ class PieceManager:
                     await peer.send_interested()
                 await peer.start_message_loop()
 
-                while (await peer.get_bitfield()) is None: # wait for bitfield
-                    await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
-        except asyncio.TimeoutError:
+
+                try:
+                    async with asyncio.timeout(self.RECEIVE_BITFIELD_TIMEOUT): #receving bitfield is optional if no bitfield was received he doesnt have any pieces
+                        while (await peer.get_bitfield()) is None: # wait for bitfield
+                            await asyncio.sleep(self.RECEIVE_BITFIELD_CHECK_INTERVAL)
+                except (asyncio.TimeoutError, TimeoutError):
+                    pass
+
+        except Exception:
             await peer.close()
-            raise
 
     async def close_all(self) -> None:
         """Closes all peer connections and cancels all ongoing downloads"""
@@ -129,6 +135,8 @@ class PieceManager:
     async def start_downloads(self):
         """Starts downloading pieces from peers. If already downloading, it will restart the download process."""
         await self.stop_downloads()
+        await self.torrent_storage.restore_pieces_from_disk()
+        await self._sync_bitfield_with_storage()
         self._is_downloading = True
         for _ in range(self.MAX_IN_FLIGHT_PIECES):
             task = asyncio.create_task(self._download_piece())
@@ -221,8 +229,13 @@ class PieceManager:
                     async with self._pieces_requested_from_peer_lock:    
                         self._pieces_requested_from_peer[peer].add(piece_index)
                     
-                    
-                    piece = await self._download_piece_from_peer(piece_index, peer)
+                    try:
+                        piece = await self._download_piece_from_peer(piece_index, peer)
+                    except Exception:
+                        async with self._pieces_requested_from_peer_lock:
+                            self._pieces_requested_from_peer[peer].discard(piece_index)
+                        continue
+
                     if piece is None:
                         async with self._pieces_requested_from_peer_lock:
                             self._pieces_requested_from_peer[peer].discard(piece_index)
@@ -249,6 +262,8 @@ class PieceManager:
                     else:
                         async with self._pieces_requested_from_peer_lock:
                             self._pieces_requested_from_peer[peer].discard(piece_index)
+            except Exception:
+                pass
             finally:
                 if piece_index is not None:
                     async with self._requested_pieces_lock:
@@ -262,7 +277,7 @@ class PieceManager:
             async with self._peers_lock:
                 peers_snapshot = list(self._peers)
             async with self.torrent_storage._downloaded_pieces_lock:
-                downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces.keys())
+                downloaded_pieces_snapshot = set(self.torrent_storage.downloaded_pieces)
             async with self._requested_pieces_lock:
                 requested_pieces_snapshot = set(self._requested_pieces)
             async with self._bitfield_lock:
@@ -364,7 +379,7 @@ class PieceManager:
     async def _validate_all_pieces(self) -> bool:
         all_valid = True
         async with self.torrent_storage._downloaded_pieces_lock:
-            existing = set(self.torrent_storage.downloaded_pieces.keys())
+            existing = set(self.torrent_storage.downloaded_pieces)
 
         for piece_index in range(self._total_piece_count):
             data = self.torrent_storage._read_piece_from_disk(piece_index)
@@ -398,18 +413,14 @@ class PieceManager:
                             + self._bitfield[byte_index + 1:]
                         )
                 async with self.torrent_storage._downloaded_pieces_lock:
-                    self.torrent_storage.downloaded_pieces.pop(piece_index, None)
+                    self.torrent_storage.downloaded_pieces.discard(piece_index)
             else:
                 # mark as downloaded and set bit
                 async with self._bitfield_lock:
                     if not self._check_bitfield_has_piece(self._bitfield, piece_index):
                         self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
                 async with self.torrent_storage._downloaded_pieces_lock:
-                    if piece_index not in self.torrent_storage.downloaded_pieces:
-                        p = Piece(piece_index, len(data))
-                        for i in range(0, len(data), PeerConnection.DEFAULT_BLOCK_LENGTH):
-                            p.add_block(i, data[i:i + PeerConnection.DEFAULT_BLOCK_LENGTH])
-                        self.torrent_storage.downloaded_pieces[piece_index] = p
+                    self.torrent_storage.downloaded_pieces.add(piece_index)
 
         return all_valid
 

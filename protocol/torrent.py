@@ -1,5 +1,5 @@
 import hashlib
-from protocol.bencode import decode, encode
+from bencode import decode, encode
 
 
 class Torrent:
@@ -56,12 +56,21 @@ class Torrent:
         # Check for multi-file torrent
         if b'files' in self.info:
             self.files = self.info[b'files']
-            self.files_info = [(file[b'path'], file[b'length']) for file in self.files]
+            self.files_info = []
+            for file in self.files:
+                path_parts = [p.decode('utf-8', errors='ignore') for p in file[b'path']]
+                self.files_info.append((path_parts, file[b'length']))
+            self.length = sum(file[1] for file in self.files_info)
         else:
             # in case of single-file torrent
             self.length = self.info.get(b'length')
             self.files = None
-            self.files_info = [(self.info.get(b'name'), self.length)] if self.length else []
+            if self.length:
+                name_bytes = self.info.get(b'name')
+                name_str = name_bytes.decode('utf-8', errors='ignore') if isinstance(name_bytes, bytes) else str(name_bytes)
+                self.files_info = [([name_str], self.length)]
+            else:
+                self.files_info = []
 
     def _compute_info_hash(self):
         info_bytes = self._raw[self.info_start:self.info_end]

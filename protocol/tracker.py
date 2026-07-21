@@ -1,7 +1,7 @@
-import requests
+import urllib.request
 import struct
 import socket
-from protocol.bencode import decode
+from bencode import decode
 
 def build_tracker_url(torrent, peer_id: bytes, port: int = 6881,
                       uploaded=0, downloaded=0, left=None):
@@ -31,9 +31,15 @@ def contact_tracker(torrent, peer_id: bytes, port: int = 6881,
 
     print("Tracker URL:", url)
 
-    response = requests.get(url, timeout=10)
-
-    return response.content  # bencoded response
+    # Force IPv4 name resolution to guarantee compact peer list response (bytes)
+    orig_getaddrinfo = socket.getaddrinfo
+    try:
+        socket.getaddrinfo = lambda host, port, family=0, type=0, proto=0, flags=0: \
+            orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.read()  # bencoded response
+    finally:
+        socket.getaddrinfo = orig_getaddrinfo
 
 def parse_compact_peers(peer_bytes: bytes):
     peers = []
