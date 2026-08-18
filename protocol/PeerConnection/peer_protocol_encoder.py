@@ -33,22 +33,16 @@ def unpack_handshake(data: bytes, expected_info_hash: bytes | None = None) -> tu
         raise ValueError("peer responded with a different info_hash")
     return info_hash, peer_id 
 
-
 def pack_keepalive() -> bytes:
     return struct.pack(">I", 0)
 
 def pack_message(message_id: int, payload: bytes) -> bytes:
     return struct.pack(">IB", len(payload) + 1, message_id) + payload
 
-def unpack_length_prefix(data: bytes) -> int:
-    _validate_size(data, struct.calcsize(">I"), "length prefix")
-    (message_length,) = struct.unpack(">I", data)
+def unpack_message_length_prefix(message: bytes) -> int:
+    _validate_size(message, struct.calcsize(">I"), "length prefix")
+    (message_length,) = struct.unpack(">I", message)
     return message_length
-
-def split_message_frame(data: bytes) -> tuple[int, bytes]:
-    if len(data) == 0:
-        raise ValueError("invalid message payload")
-    return data[0], data[1:]
 
 def pack_have_payload(piece_index: int) -> bytes:
     return struct.pack(">I", piece_index)
@@ -58,21 +52,6 @@ def unpack_have_payload(payload: bytes) -> int:
     (piece_index,) = struct.unpack(">I", payload)
     return piece_index
 
-def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
-    byte_index = piece_index // 8
-    bit_offset = piece_index % 8
-    mask = 1 << (7 - bit_offset)
-
-    if bitfield is None:
-        bitfield = b"\x00" * (byte_index + 1)
-    elif byte_index >= len(bitfield):
-        bitfield += b"\x00" * (byte_index - len(bitfield) + 1)
-
-    return (
-        bitfield[:byte_index]
-        + bytes([bitfield[byte_index] | mask])
-        + bitfield[byte_index + 1:]
-    )
 
 def pack_request_payload(piece_index: int, begin: int, length: int) -> bytes:
     return struct.pack(">III", piece_index, begin, length)
@@ -98,6 +77,24 @@ def normalize_bitfield_length(payload: bytes, total_piece_count: int) -> bytes:
     if len(payload) > expected_len:
         return payload[:expected_len]
     return payload
-        
 
+def generate_empty_bitfield(total_piece_count: int) -> bytes:
+    return b"\x00" * ((total_piece_count + 7) // 8)
 
+def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
+    if piece_index < 0:
+        raise ValueError("piece_index must be non-negative")
+    byte_index = piece_index // 8
+    bit_offset = piece_index % 8
+    mask = 1 << (7 - bit_offset)
+
+    if bitfield is None:
+        bitfield = b"\x00" * (byte_index + 1)
+    elif byte_index >= len(bitfield):
+        bitfield += b"\x00" * (byte_index - len(bitfield) + 1)
+
+    return (
+        bitfield[:byte_index]
+        + bytes([bitfield[byte_index] | mask])
+        + bitfield[byte_index + 1:]
+    )

@@ -69,14 +69,20 @@ class TorrentStorage:
         piece_start, piece_end = self._get_piece_location(piece_index)
         return self._get_file_spans_for_range(piece_start, piece_end)
     
-    async def add_piece(self, piece_index: int, piece: Piece) -> None:
-        if self._write_piece_to_disk(piece_index, piece.get_assembled_data()):
+    async def add_piece(self, piece_index: int,begin: Optional[int] , block_data: bytes) -> None:
+        if self._write_piece_to_disk(piece_index, begin, block_data):
             async with self._downloaded_pieces_lock:
                 self.downloaded_pieces.add(piece_index)
     
-    def _write_piece_to_disk(self, piece_index: int, data: bytes) -> bool:
+    def _write_piece_to_disk(self, piece_index: int, begin: Optional[int] ,data: bytes) -> bool:
         file_spans = self._get_file_spans_for_piece(piece_index)
         bytes_written = 0
+
+        if begin is not None:
+            piece_start, _ = self._get_piece_location(piece_index)
+            range_start = piece_start + begin
+            range_end = range_start + len(data)
+            file_spans = self._get_file_spans_for_range(range_start, range_end)
         
         for file_path, file_offset, bytes_count in file_spans:
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,9 +101,8 @@ class TorrentStorage:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
         return True
-    
+
     async def restore_pieces_from_disk(self) -> None:
-        """Restore existing pieces from disk"""
         for idx in range(self.total_piece_count):
             data = self._read_piece_from_disk(idx)
             if data:

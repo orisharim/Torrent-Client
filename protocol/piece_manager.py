@@ -49,6 +49,7 @@ class PieceManager:
         self._pieces_requested_from_peer_lock = asyncio.Lock()
 
         self._download_tasks: list[asyncio.Task] = []
+        self._reconnect_task: Optional[asyncio.Task] = None
         
     async def set_peers(self, peers_info: list[tuple[str, int]]):
         """Closes all existing connections and sets the peer list to the provided peers"""
@@ -150,9 +151,27 @@ class PieceManager:
             task.add_done_callback(_remove_done_task)
             self._download_tasks.append(task)
 
+        self._reconnect_task = asyncio.create_task(self._periodic_reconnect())
+
+    async def _periodic_reconnect(self):
+        while self._is_downloading:
+            try:
+                await self.connect_to_unconnected_peers()
+            except Exception:
+                pass
+            await asyncio.sleep(15.0)
+
     async def stop_downloads(self):
         """Stops all ongoing downloads and cancels the download tasks"""
         self._is_downloading = False
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
+
         for task in self._download_tasks:
             task.cancel()
         if self._download_tasks:
@@ -230,13 +249,15 @@ class PieceManager:
                         self._pieces_requested_from_peer[peer].add(piece_index)
                     
                     try:
-                        piece = await self._download_piece_from_peer(piece_index, peer)
+                        piece = await peer.download_piece(piece_index)
                     except Exception:
+                        await peer.close()
                         async with self._pieces_requested_from_peer_lock:
                             self._pieces_requested_from_peer[peer].discard(piece_index)
                         continue
 
                     if piece is None:
+                        await peer.close()
                         async with self._pieces_requested_from_peer_lock:
                             self._pieces_requested_from_peer[peer].discard(piece_index)
                         continue
@@ -333,6 +354,8 @@ class PieceManager:
             peers_snapshot = list(self._peers)
 
         for peer in peers_snapshot:
+            if not await peer.is_connected():
+                continue
             bitfield = await peer.get_bitfield()
             async with self._pieces_requested_from_peer_lock:
                 pending = set(self._pieces_requested_from_peer.get(peer, set()))
@@ -340,9 +363,6 @@ class PieceManager:
                 return peer
 
         return None
-    
-    async def _download_piece_from_peer(self, piece_index: int, peer: PeerConnection) -> Optional[Piece]:
-        return await peer.download_piece(piece_index)
     
     def _check_bitfield_has_piece(self, bitfield: bytes, piece_index: int) -> bool:
         byte_index = piece_index // 8
@@ -352,20 +372,6 @@ class PieceManager:
         bit_offset = piece_index % 8
         mask = 1 << (7 - bit_offset)
         return (bitfield[byte_index] & mask) != 0
-    
-    def _set_piece_in_bitfield(self, bitfield: bytes, piece_index: int) -> bytes:
-        byte_index = piece_index // 8
-        bit_offset = piece_index % 8
-        mask = 1 << (7 - bit_offset)
-
-        if byte_index >= len(bitfield):
-            bitfield += b'\x00' * (byte_index - len(bitfield) + 1)
-
-        return (
-            bitfield[:byte_index] +
-            bytes([bitfield[byte_index] | mask]) +
-            bitfield[byte_index + 1:]
-        )
     
     async def _validate_piece(self, piece_index: int, piece: Piece) -> bool:
         assembled_piece = piece.get_assembled_data()
@@ -424,6 +430,5 @@ class PieceManager:
 
         return all_valid
 
-    def generate_empty_bitfield(self) -> bytes:
-        return b"\x00" * ((self._total_piece_count + 7) // 8)
+    
 

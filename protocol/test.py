@@ -5,7 +5,7 @@ import tracker
 import os
 import asyncio
 
-torrent = Torrent('./ubuntu.torrent')
+torrent = Torrent('./protocol//ubuntu.torrent')
 
 print(torrent.summary())
 
@@ -26,11 +26,32 @@ async def main():
             total = piece_manager._total_piece_count
             percent = (downloaded / total) * 100 if total > 0 else 0
             print(f"Download Progress: {downloaded}/{total} pieces ({percent:.2f}%)")
+            print(f"Bitfield: {piece_manager._bitfield}")
             await asyncio.sleep(5)
         print("Download complete!")
     except KeyboardInterrupt:
         print("Stopping download...")
     finally:
         await piece_manager.close_all()
+
+    success = await piece_manager._validate_all_pieces()
+    while not success:
+        try:
+            while not piece_manager.is_complete():
+                downloaded = piece_manager.get_downloaded_piece_count()
+                total = piece_manager._total_piece_count
+                percent = (downloaded / total) * 100 if total > 0 else 0
+                print(f"Download Progress: {downloaded}/{total} pieces ({percent:.2f}%)")
+                print(f"Bitfield: {piece_manager._bitfield}")
+                await asyncio.sleep(5)
+                print("Download complete!")
+        except KeyboardInterrupt:
+            print("Stopping download...")
+        finally:
+            await piece_manager.close_all()
+        success = await piece_manager._validate_all_pieces()
+
+        
+        
 
 asyncio.run(main())

@@ -1,5 +1,5 @@
 from typing import Optional
-
+import peer_protocol_encoder as protocol_encoder
 
 class PeerState:
     def __init__(self) -> None:
@@ -18,9 +18,10 @@ class PeerState:
     def update_bitfield(self, bitfield: Optional[bytes]) -> None:
         self.bitfield = bitfield
 
-    def set_piece_in_bitfield(self, piece_index: int, set_in_bitfield_fn) -> None:
-        self.bitfield = set_in_bitfield_fn(self.bitfield, piece_index)
-
+    def set_piece_in_bitfield(self, piece_index: int) -> bytes:
+        self.bitfield = protocol_encoder.set_piece_in_bitfield(self.bitfield, piece_index)
+        return self.bitfield
+    
     def get_bitfield(self) -> Optional[bytes]:
         return self.bitfield
 

@@ -1,15 +1,16 @@
 import asyncio
 from typing import Optional, Tuple
-
-from PeerConnection.peer_state import PeerState
-from PeerConnection import peer_protocol_encoder as protocol_encoder
-from piece import Piece
+import time
+from peer_state import PeerState
+import peer_protocol_encoder as protocol_encoder
 from torrent_storage import TorrentStorage
 
 class PeerConnection:
     DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 10.0
-    WAIT_FOR_UNCHOKE_INTERVAL = 0.1
+    HEARTBEAT_INTERVAL = 60.0
+    DEAD_CONNECTION_TIMEOUT = 120.0
+    UPLOAD_TIMEOUT = 30.0
     
     MESSAGE_CHOKE = 0
     MESSAGE_UNCHOKE = 1
@@ -25,366 +26,289 @@ class PeerConnection:
     BLOCK_DOWNLOAD_TIMEOUT = 10.0
 
     def __init__(self, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> None:
-        self.host = host
-        self.port = port
-        self.info_hash = info_hash
-        self.peer_id = peer_id
-        self.storage = storage
-        self.reader = None
-        self.writer = None
-        self.state = PeerState()
-        self._message_loop_task: Optional[asyncio.Task] = None
+        self._host = host
+        self._port = port
+        self._info_hash = info_hash
+        self._peer_id = peer_id
+        self._storage = storage
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
+        self._state = PeerState()
+        self._last_message_receive_time: Optional[float] = None
+        self._last_message_send_time: Optional[float] = None
 
-        self._pending_block_futures: dict[Tuple[int, int], asyncio.Future] = {}
-        self._pending_block_futures_lock = asyncio.Lock()
-        
+        self._message_loop_task: Optional[asyncio.Task] = None
+        self._upload_tasks: dict[tuple[int,int], (asyncio.Task, float)] = {} # (piece_index, begin), (task, timestamp)
+        self._heartbeat_task: Optional[asyncio.Task] = None
+
         self._write_lock = asyncio.Lock()
-        
-        self._pending_uploads: dict[tuple[int,int], asyncio.Task] = {}
-        self._pending_uploads_lock = asyncio.Lock()
+        self._upload_tasks_lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        if self.reader is None or self.writer is None:
-            self.reader, self.writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port),
-                timeout=self.CONNECTION_TIMEOUT,
-            )
-
-    async def close(self) -> None:
+        if not await self.is_connected():
+            self._reader, self._writer = await asyncio.wait_for(asyncio.open_connection(self._host, self._port), timeout=self.CONNECTION_TIMEOUT)
+        
+    async def disconnect(self) -> None:
         await self.stop_message_loop()
-        if self.writer is not None:
-            self.writer.close()
+        if self._writer:
+            self._writer.close()
             try:
-                await self.writer.wait_closed() #make sure the connection is fully closed
+                await self._writer.wait_closed()
             except Exception:
                 pass
-        self.reader = None
-        self.writer = None
-        self.state.reset()
-        async with self._pending_block_futures_lock:
-            for future in self._pending_block_futures.values():
-                if not future.done():
-                    future.cancel()
-            self._pending_block_futures.clear()
-        async with self._pending_uploads_lock:
-            for task in list(self._pending_uploads.values()):
-                try:
-                    task.cancel()
-                except Exception:
-                    pass
-            self._pending_uploads.clear()
-
-    #async version of __enter__ and __exit__ ``
-    async def __aenter__(self) -> "PeerConnection":
-        await self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        await self.close()
-
-    async def send_handshake(self) -> None:
-        await self.connect() #make sure its connected even though it should be already
-        if self.writer is None or self.reader is None:
-            raise ConnectionError("not connected to peer")
-
-        handshake = protocol_encoder.pack_handshake(self.info_hash, self.peer_id)
-        
-        async with self._write_lock:
-            self.writer.write(handshake)
-            await self._drain()
-
-        response = await self._read_exactly(68)
-
-        _, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self.info_hash)
-        self.state.remote_peer_id = remote_peer_id
-
-    async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
-        await self.connect()
-        if self.writer is None:
-            raise ConnectionError("not connected to peer")
-        if message_id is None:
-            packet = protocol_encoder.pack_keepalive()
-        else:
-            packet = protocol_encoder.pack_message(message_id, payload)
-
-        async with self._write_lock:
-            self.writer.write(packet)
-            await self._drain()       
-
-    async def send_interested(self) -> None:
-        self.state.set_am_interested(True)
-        await self.send_message(self.MESSAGE_INTERESTED)
-
-    async def send_not_interested(self) -> None:
-        self.state.set_am_interested(False)
-        await self.send_message(self.MESSAGE_NOT_INTERESTED)
-
-    async def send_choke(self) -> None:
-        self.state.set_am_choking(True)
-        await self.send_message(self.MESSAGE_CHOKE)
-
-    async def send_unchoke(self) -> None:
-        self.state.set_am_choking(False)
-        await self.send_message(self.MESSAGE_UNCHOKE)
-
-    async def send_bitfield(self, bitfield: bytes) -> None:
-        await self.send_message(self.MESSAGE_BITFIELD, bitfield)
-
-    async def send_have(self, piece_index: int) -> None:
-        payload = protocol_encoder.pack_have_payload(piece_index)
-        await self.send_message(self.MESSAGE_HAVE, payload)
-
-    async def request_block(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
-        payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
-        await self.send_message(self.MESSAGE_REQUEST, payload)
-
-    async def cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
-        payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
-        await self.send_message(self.MESSAGE_CANCEL, payload)
-
-    async def read_message(self) -> tuple[Optional[int], Optional[object]]:
-        await self.connect()
-
-        length_prefix = await self._read_exactly(4)
-        message_length = protocol_encoder.unpack_length_prefix(length_prefix)
-        if message_length == 0:
-            return None, None
-
-        message = await self._read_exactly(message_length)
-
-        message_id, payload = protocol_encoder.split_message_frame(message)
-
-        if message_id == self.MESSAGE_CHOKE:
-            result = await self._on_choke(payload)
-        elif message_id == self.MESSAGE_UNCHOKE:
-            result = await self._on_unchoke(payload)
-        elif message_id == self.MESSAGE_INTERESTED:
-            result = await self._on_interested(payload)
-        elif message_id == self.MESSAGE_NOT_INTERESTED:
-            result = await self._on_not_interested(payload)
-        elif message_id == self.MESSAGE_HAVE:
-            result = await self._on_have(payload)
-        elif message_id == self.MESSAGE_BITFIELD:
-            result = await self._on_bitfield(payload)
-        elif message_id == self.MESSAGE_REQUEST:
-            result = await self._on_request(payload)
-        elif message_id == self.MESSAGE_PIECE:
-            result = await self._on_piece(payload)
-        elif message_id == self.MESSAGE_CANCEL:
-            result = await self._on_cancel(payload)
-        else:
-            result = await self._on_unknown(payload)
-
-        return message_id, result
+            self._writer = None
+            self._reader = None
 
     async def start_message_loop(self) -> None:
-        if self._message_loop_task is not None and not self._message_loop_task.done():
-            return
-        self._message_loop_task = asyncio.create_task(self._message_loop())
+        await self.connect()
+        if self._message_loop_task is None or self._message_loop_task.done():
+            self._message_loop_task = asyncio.create_task(self._message_loop())
+            self._heartbeat_task = asyncio.create_task(self._heartbeat())
 
     async def stop_message_loop(self) -> None:
-        if self._message_loop_task is not None:
-            self._message_loop_task.cancel()
-            try:
-                await self._message_loop_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-            self._message_loop_task = None
-            
-    async def _message_loop(self) -> None:
-        while True:
-            message_id, parsed = await self.read_message()
-            if message_id is None:
-                continue
-            if message_id == self.MESSAGE_PIECE:
-                piece_index, begin, block = parsed
-                await self._resolve_pending_block(piece_index, begin, block)
-            elif message_id == self.MESSAGE_REQUEST:
-                task = asyncio.create_task(self._send_piece(*parsed))
-                async with self._pending_uploads_lock:
-                    piece_index, begin, _length = parsed
-                    self._pending_uploads[(piece_index, begin)] = task
-            elif message_id == self.MESSAGE_BITFIELD:
-                pass
-            elif message_id == self.MESSAGE_HAVE:
-                pass
+        async with self._upload_tasks_lock:
+            for task, timestamp in self._upload_tasks.values():
+                task.cancel()
+            self._upload_tasks.clear()
 
-    async def wait_for_unchoke(self) -> None:
-        while True:
-            if not await self.is_choked():
-                return
-            await asyncio.sleep(self.WAIT_FOR_UNCHOKE_INTERVAL)
+        if self._message_loop_task and not self._message_loop_task.done():
+            self._message_loop_task.cancel()
+        self._message_loop_task = None
+
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+        self._heartbeat_task = None
     
+
+    async def _message_loop(self) -> None:
+        try:
+            while True:
+                await self._read_message()
+        except Exception:
+            raise Exception("message loop terminated unexpectedly")
+
+        finally:
+            await self.disconnect()
+
+    async def _read_message(self) -> None:
+        length_prefix = await self._read_exactly(4)
+        self._last_message_receive_time = time.monotonic()
+        message_length = protocol_encoder.unpack_message_length_prefix(length_prefix)
+
+        if message_length == 0:
+            return  # keepalive message
+        message = await self._read_exactly(message_length)
+        message_id, payload = message[0], message[1:]
+
+        if message_id == self.MESSAGE_CHOKE:
+            await self._on_choke(payload)
+        elif message_id == self.MESSAGE_UNCHOKE:
+            await self._on_unchoke(payload)
+        elif message_id == self.MESSAGE_INTERESTED:
+            await self._on_interested(payload)
+        elif message_id == self.MESSAGE_NOT_INTERESTED:
+            await self._on_not_interested(payload)
+        elif message_id == self.MESSAGE_HAVE:
+            await self._on_have(payload)
+        elif message_id == self.MESSAGE_BITFIELD:
+            await self._on_bitfield(payload)
+        elif message_id == self.MESSAGE_REQUEST:
+            await self._on_request(payload)
+        elif message_id == self.MESSAGE_PIECE:
+            await self._on_piece(payload)
+        elif message_id == self.MESSAGE_CANCEL:
+            await self._on_cancel(payload)
+
+    async def _on_choke(self, payload: bytes) -> None:
+        self._state.set_peer_choking(True)
+    
+    async def _on_unchoke(self, payload: bytes) -> None:
+        self._state.set_peer_choking(False)
+
+    async def _on_interested(self, payload: bytes) -> None:
+        self._state.set_peer_interested(True)
+
+    async def _on_not_interested(self, payload: bytes) -> None:
+        self._state.set_peer_interested(False)
+
+    async def _on_have(self, payload: bytes) -> None:
+        piece_index = protocol_encoder.unpack_have_payload(payload)
+        self._state.set_piece_in_bitfield(piece_index)
+
+    async def _on_bitfield(self, payload: bytes) -> None:
+        self._state.update_bitfield(payload)
+
+    async def _on_request(self, payload: bytes) -> None:
+        if self._state.am_choking:
+            return
+        piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "piece")
+        upload_task = asyncio.create_task(self._send_piece(piece_index, begin, length))
+
+        async with self._upload_tasks_lock:
+          self._upload_tasks[(piece_index, begin)] = (upload_task, time.monotonic())
+
     async def _send_piece(self, piece_index: int, begin: int, length: int) -> None:
-        if piece_index < 0 or piece_index >= self.storage.total_piece_count:
+        if piece_index < 0 or piece_index >= self._storage.total_piece_count:
             return
         if begin < 0 or length <= 0:
             return
-
-        piece_length = self.storage.get_piece_length(piece_index)
+        
+        piece_length = self._storage.get_piece_length(piece_index)
         if begin >= piece_length:
             return
-
+        
         read_length = min(length, piece_length - begin)
-        data = self.storage.read_piece_bytes(piece_index, begin, read_length)
+        data = self._storage.read_piece_bytes(piece_index, begin, read_length)
         if data is None:
             return
         payload = protocol_encoder.pack_piece_payload(piece_index, begin, data)
         try:
             await self.send_message(self.MESSAGE_PIECE, payload)
-        finally:
-            # cleanup pending upload record if present
-            key = (piece_index, begin)
-            async with self._pending_uploads_lock:
-                self._pending_uploads.pop(key, None)
+            async with self._upload_tasks_lock:
+                self._upload_tasks.pop((piece_index, begin), None)
+        except Exception:
+            raise Exception(f"Failed to send piece {piece_index} at offset {begin} to peer")
 
-    async def is_choked(self) -> bool:
-        return self.state.is_peer_choking()
-    
-    async def is_interested(self) -> bool:
-        return self.state.is_am_interested()
+    async def _on_piece(self, payload: bytes) -> None:
+        piece_index, begin, block_data = protocol_encoder.unpack_piece_payload(payload)
+        await self._storage.add_piece(piece_index, begin, block_data)
 
-    async def is_connected(self) -> bool:
-        return self.reader is not None and self.writer is not None
-
-    async def _on_choke(self, payload: bytes) -> None:
-        self.state.set_peer_choking(True)
-
-    async def _on_unchoke(self, payload: bytes) -> None:
-        self.state.set_peer_choking(False)
-
-    async def _on_interested(self, payload: bytes) -> None:
-        self.state.set_peer_interested(True)
-
-    async def _on_not_interested(self, payload: bytes) -> None:
-        self.state.set_peer_interested(False)
-
-    async def _on_have(self, payload: bytes) -> int:
-        piece_index = protocol_encoder.unpack_have_payload(payload)
-        self.state.set_piece_in_bitfield(piece_index, protocol_encoder.set_piece_in_bitfield)
-        return piece_index
-
-    async def _on_bitfield(self, payload: bytes) -> bytes:
-        payload = protocol_encoder.normalize_bitfield_length(payload, self.storage.total_piece_count)
-        self.state.update_bitfield(payload)
-        return payload
-
-    async def get_bitfield(self) -> Optional[bytes]:
-        return self.state.get_bitfield()
-
-    async def _on_request(self, payload: bytes) -> tuple[int, int, int]:
-        return protocol_encoder.unpack_request_payload(payload, "request")
-
-    async def _on_piece(self, payload: bytes) -> tuple[int, int, bytes]:
-        return protocol_encoder.unpack_piece_payload(payload)
-
-    async def _on_cancel(self, payload: bytes) -> tuple[int, int, int]:
+    async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
         key = (piece_index, begin)
-        async with self._pending_uploads_lock:
-            task = self._pending_uploads.pop(key, None)
+        async with self._upload_tasks_lock:
+            task = self._upload_tasks.pop(key, None)
             if task is not None:
                 task.cancel()
-        return piece_index, begin, length
-
-    async def _on_unknown(self, payload: bytes) -> bytes:
-        return payload
-
-    async def download_piece(self, piece_index: int) -> Optional[Piece]:
-        if piece_index < 0 or piece_index >= self.storage.total_piece_count:
-            return None
-
-        await self.send_interested()
-        await self.wait_for_unchoke()
-
-        piece_length = self.storage.get_piece_length(piece_index)
-        piece = Piece(piece_index, piece_length)
-        block_size = min(self.DEFAULT_BLOCK_LENGTH, piece_length)
-
-        #limit concurrent block request tasks
-        semaphore = asyncio.Semaphore(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
-
-        async def download_block(begin: int, length: int) -> tuple[int, Optional[bytes]]:
-            async with semaphore:
-                block = await self._request_block(piece_index, begin, length)
-                return begin, block
-
-        tasks = []
-
-        #create concurrent download block tasks
-        for begin in range(0, piece_length, block_size):
-            tasks.append(asyncio.create_task(download_block(begin, min(block_size, piece_length - begin))))
-            
-        try:
-            # process block downloads as they complete
-            for completed_task in asyncio.as_completed(tasks):
-                begin, block = await completed_task
-                if block is None:
-                    return None
-                piece.add_block(begin, block)
-        finally:
-            #ensure all download tasks are cleaned up
-            for task in tasks:
-                task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-        return piece
-
-    async def _request_block(self, piece_index: int, begin: int, length: int) -> Optional[bytes]:
-        key = (piece_index, begin)
-
-        #retry requesting the block up to MAX_BLOCK_RETRIES times in case of failures
-        for attempt in range(self.MAX_BLOCK_RETRIES):
-            loop = asyncio.get_running_loop()
-            future = loop.create_future()
-
-            #register the future for this specific block key to receive data
-            async with self._pending_block_futures_lock:
-                self._pending_block_futures[key] = future
-
-            try:
-                if not await self.is_interested():
-                    await self.send_interested()
-
-                if await self.is_choked():
-                    await asyncio.wait_for(self.wait_for_unchoke(), timeout=self.BLOCK_DOWNLOAD_TIMEOUT)
-
-                await self.request_block(piece_index, begin, length)
-                return await asyncio.wait_for(future, timeout=self.BLOCK_DOWNLOAD_TIMEOUT)
-            except Exception:
-                if not future.done():
-                    future.cancel()
-                try:
-                    await self.cancel_request(piece_index, begin, length)
-                except Exception:
-                    pass
-            finally:
-                async with self._pending_block_futures_lock:
-                    self._pending_block_futures.pop(key, None)
-
-        return None
-
-    async def _resolve_pending_block(self, piece_index: int, begin: int, block: bytes) -> None:
-        key = (piece_index, begin)
-        async with self._pending_block_futures_lock:
-            future = self._pending_block_futures.get(key)
-
-        if future is None or future.done():
-            return
-
-        # resolve the future with the received block bytes
-        future.set_result(block)
 
     async def _read_exactly(self, size: int) -> bytes:
-        if self.reader is None:
-            raise ConnectionError("not connected to peer")
-        return await asyncio.wait_for(self.reader.readexactly(size), timeout=self.CONNECTION_TIMEOUT)
-
+            if self._reader is None:
+                raise ConnectionError("not connected to peer")
+            return await asyncio.wait_for(self._reader.readexactly(size), timeout=self.CONNECTION_TIMEOUT)
+    
     async def _drain(self) -> None:
-        if self.writer is None:
-            raise ConnectionError("not connected to peer")
-        await asyncio.wait_for(self.writer.drain(), timeout=self.CONNECTION_TIMEOUT)
+        if self._writer is None or self._writer.is_closing():
+            raise ConnectionError("not connected to peer or connection is closing")
+        await asyncio.wait_for(self._writer.drain(), timeout=self.CONNECTION_TIMEOUT)
 
+    async def _heartbeat(self) -> None:
+        while True:
+            await asyncio.sleep(self.HEARTBEAT_INTERVAL)
+
+            async with self._upload_tasks_lock:
+                for key, (task, timestamp) in list(self._upload_tasks.items()):
+                    if (time.monotonic() - timestamp) > self.UPLOAD_TIMEOUT:
+                        task.cancel()
+                        self._upload_tasks.pop(key, None)
+
+            if self._last_message_receive_time is not None and (time.monotonic() - self._last_message_receive_time) > self.DEAD_CONNECTION_TIMEOUT:
+                await self.disconnect()
+                break
+
+            if self._last_message_send_time is not None and (time.monotonic() - self._last_message_send_time) > self.HEARTBEAT_INTERVAL:
+                await self.send_message(None)
+                
+            
+
+    async def send_handshake(self):
+        await self.connect()
+        handshake = protocol_encoder.pack_handshake(self._info_hash, self._peer_id)
+                
+        async with self._write_lock:
+            if self._writer is None or self._writer.is_closing():
+                raise ConnectionError("connection was closed during write")
+            self._writer.write(handshake)
+            await self._drain()
+            self._last_message_send_time = time.monotonic()
+        
+        response = await self._read_exactly(68)
+
+        self._last_message_receive_time = time.monotonic()
+        _, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
+        self._state.remote_peer_id = remote_peer_id
+
+    async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
+        await self.connect()
+        if self._writer is None or self._writer.is_closing():
+            raise ConnectionError("not connected to peer or connection is closing")
+        if message_id is None:
+            packet = protocol_encoder.pack_keepalive()
+        else:
+            packet = protocol_encoder.pack_message(message_id, payload)
+    
+        async with self._write_lock:
+            if self._writer is None or self._writer.is_closing():
+                raise ConnectionError("connection was closed during write")
+            self._writer.write(packet)
+            await self._drain()
+            self._last_message_send_time = time.monotonic()
+    
+    async def send_interested(self) -> None:
+        self._state.set_am_interested(True)
+        await self.send_message(self.MESSAGE_INTERESTED)
+    
+    async def send_not_interested(self) -> None:
+        self._state.set_am_interested(False)
+        await self.send_message(self.MESSAGE_NOT_INTERESTED)
+    
+    async def send_choke(self) -> None:
+        self._state.set_am_choking(True)
+        await self.send_message(self.MESSAGE_CHOKE)
+    
+    async def send_unchoke(self) -> None:
+        self._state.set_am_choking(False)
+        await self.send_message(self.MESSAGE_UNCHOKE)
+    
+    async def send_bitfield(self, bitfield: bytes) -> None:
+        await self.send_message(self.MESSAGE_BITFIELD, bitfield)
+    
+    async def send_have(self, piece_index: int) -> None:
+        payload = protocol_encoder.pack_have_payload(piece_index)
+        await self.send_message(self.MESSAGE_HAVE, payload)
+
+    async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
+        payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
+        await self.send_message(self.MESSAGE_REQUEST, payload)
+    
+    async def send_cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
+        payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
+        await self.send_message(self.MESSAGE_CANCEL, payload) 
+
+    async def send_piece_request(self, piece_index: int) -> None:
+        piece_length = self._storage.get_piece_length(piece_index)
+        
+        block_queue = asyncio.Queue()
+        for begin in range(0, piece_length, self.DEFAULT_BLOCK_LENGTH):
+            length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
+            await block_queue.put((begin, length))
+
+        async def worker():
+            while not block_queue.empty():
+                await block_queue.join()
+                try:
+                    begin, length = await block_queue.get()
+                except asyncio.QueueEmpty:
+                    break
+                await self.send_block_request(piece_index, begin, length)
+                block_queue.task_done()
+                
+
+        async with asyncio.TaskGroup() as tg:
+            for _ in range(min(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE, block_queue.qsize())):
+                tg.create_task(worker())
+
+    async def is_choked(self) -> bool:
+        return self._state.is_peer_choking()
+         
+    async def is_interested(self) -> bool:
+        return self._state.is_am_interested()
+     
+    async def is_connected(self) -> bool:
+        return self._reader is not None and self._writer is not None   
+
+    async def get_bitfield(self) -> Optional[bytes]:
+        return self._state.get_bitfield()
+
+    
+            
+    
