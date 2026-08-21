@@ -98,6 +98,23 @@ def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
         + bitfield[byte_index + 1:]
     )
 
+def clear_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
+    if bitfield is None:
+        return b"\x00" * ((piece_index // 8) + 1)
+
+    byte_index = piece_index // 8
+    if byte_index >= len(bitfield):
+        return bitfield
+
+    bit_offset = piece_index % 8
+    mask = ~(1 << (7 - bit_offset)) & 0xFF
+
+    return (
+        bitfield[:byte_index]
+        + bytes([bitfield[byte_index] & mask])
+        + bitfield[byte_index + 1:]
+    )
+
 def check_bitfield_has_piece(self, bitfield: bytes, piece_index: int) -> bool:
     byte_index = piece_index // 8
     if byte_index < 0 or byte_index >= len(bitfield):

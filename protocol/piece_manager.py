@@ -39,7 +39,7 @@ class PieceManager:
             self._peers.append(peer)
 
 
-        self._bitfield: bytes = self.generate_empty_bitfield()  
+        self._bitfield: bytes = protocol_encoder.generate_empty_bitfield()  
         self._requested_pieces: list[int] = []
 
         self._is_downloading = False
@@ -71,12 +71,12 @@ class PieceManager:
 
     async def _sync_bitfield_with_storage(self) -> None:
         await self._torrent_storage.restore_pieces_from_disk()
-        bitfield = self.generate_empty_bitfield()
+        bitfield = protocol_encoder.generate_empty_bitfield()
         async with self._torrent_storage._downloaded_pieces_lock:
             downloaded_piece_indexes = list(self._torrent_storage._downloaded_pieces)
 
         for piece_index in downloaded_piece_indexes:
-            bitfield = self._set_piece_in_bitfield(bitfield, piece_index)
+            bitfield = protocol_encoder.set_piece_in_bitfield(bitfield, piece_index)
 
         async with self._bitfield_lock:
             self._bitfield = bitfield
@@ -89,7 +89,7 @@ class PieceManager:
             for peer in peers_snapshot:
                 if await peer.is_connected():
                     continue
-                tg.create_task(self._connect_to_peer(peer))
+                tg.create_task(peer.connect())
 
     async def connect_to_all_peers(self) -> None:
         """Closes all existing connections and connects to all peers"""
@@ -99,7 +99,7 @@ class PieceManager:
             peers_snapshot = list(self._peers)
         async with asyncio.TaskGroup() as tg:
             for peer in peers_snapshot:
-                tg.create_task(self._connect_to_peer(peer))
+                tg.create_task(peer.connect())
 
     async def close_all(self) -> None:
         """Closes all peer connections and cancels all ongoing downloads"""
@@ -148,7 +148,7 @@ class PieceManager:
                 if not is_valid:
                     await self._torrent_storage.delete_piece(piece_index)
                     async with self._bitfield_lock:
-                        self._bitfield = self._clear_piece_in_bitfield(self._bitfield, piece_index)
+                        self._bitfield = protocol_encoder.clear_piece_in_bitfield(self._bitfield, piece_index)
 
     async def stop_downloads(self):
         """stops all ongoing downloads and cancels the download tasks"""
@@ -173,7 +173,7 @@ class PieceManager:
 
         self._validation_task = None
         self._reconnect_task = None
-        
+
         # send not interested to the peers
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
@@ -211,7 +211,7 @@ class PieceManager:
     def get_downloaded_piece_count(self) -> int:
         count = 0
         for i in range(self._total_piece_count):
-            if self._check_bitfield_has_piece(self._bitfield, i):
+            if protocol_encoder.check_bitfield_has_piece(self._bitfield, i):
                 count += 1
         return count
     
@@ -234,7 +234,7 @@ class PieceManager:
             await piece.wait_until_complete()
             
             async with self._bitfield_lock:
-                self._bitfield = self._set_piece_in_bitfield(self._bitfield, piece_index)
+                self._bitfield = protocol_encoder.set_piece_in_bitfield(self._bitfield, piece_index)
         
         async with self._requested_pieces_lock:
             if piece_index in self._requested_pieces:
@@ -271,8 +271,6 @@ class PieceManager:
 
         return rarest_piece_idx
 
-            
-            
     async def _select_peer_for_piece(self, piece_index: int) -> Optional[PeerConnection]:
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
@@ -300,5 +298,5 @@ class PieceManager:
         return selected_peer
             
     def is_piece_downloaded(self, piece_index: int) -> bool:
-        return self._check_bitfield_has_piece(self._bitfield, piece_index)
+        return protocol_encoder.check_bitfield_has_piece(self._bitfield, piece_index)
 
