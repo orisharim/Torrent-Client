@@ -52,7 +52,6 @@ def unpack_have_payload(payload: bytes) -> int:
     (piece_index,) = struct.unpack(">I", payload)
     return piece_index
 
-
 def pack_request_payload(piece_index: int, begin: int, length: int) -> bytes:
     return struct.pack(">III", piece_index, begin, length)
 
@@ -98,3 +97,12 @@ def set_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
         + bytes([bitfield[byte_index] | mask])
         + bitfield[byte_index + 1:]
     )
+
+def check_bitfield_has_piece(self, bitfield: bytes, piece_index: int) -> bool:
+    byte_index = piece_index // 8
+    if byte_index < 0 or byte_index >= len(bitfield):
+        return False
+
+    bit_offset = piece_index % 8
+    mask = 1 << (7 - bit_offset)
+    return (bitfield[byte_index] & mask) != 0
