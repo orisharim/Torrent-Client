@@ -17,6 +17,7 @@ class PieceManager:
     RECEIVE_BITFIELD_TIMEOUT = 3.0
     RECONNECT_INTERVAL = 15.0
     VALIDATION_INTERVAL = 30.0
+    PIECE_DOWNLOAD_TIMEOUT = 120.0
 
     MAX_IN_FLIGHT_PIECES = 20
     MAX_IN_FLIGHT_PIECES_PER_PEER = 5
@@ -26,12 +27,7 @@ class PieceManager:
         self._peer_id = peer_id
         self._total_piece_count = len(torrent_metadata.pieces)
 
-        self._torrent_storage = TorrentStorage(
-            piece_length = torrent_metadata.piece_length,
-            total_piece_count = self._total_piece_count,
-            files=torrent_metadata.files_info,
-            base_path=download_path,
-        )
+        self._torrent_storage = TorrentStorage(torrent_metadata, download_path)
 
         self._peers: list[PeerConnection] = []
         for ip, port in peers_info:
@@ -118,20 +114,40 @@ class PieceManager:
         peers_snapshot = []
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
+        
+        message_loop_started = False
         for peer in peers_snapshot:
             if not await peer.is_message_loop_running():
-                await peer.start_message_loop()
+                try:
+                    await peer.connect()
+                    await peer.start_message_loop()
+                    message_loop_started = True
+                except Exception as e:
+                    print(f"Failed to start message loop for peer {peer._host}: {e}")
+        
+        if not message_loop_started:
+            print("Failed to start message loop with any peer")
+            await self.stop_downloads()
+            raise ConnectionError("No peers available for downloading")
                 
 
 
         async def download_loop():
-            await self._download_piece()
-            if (self.get_downloaded_piece_count() < self._total_piece_count) and self._is_downloading:
-                await download_loop()
-                return 
+            try:
+                while True:
+                    if not self._is_downloading or await self.is_complete():
+                        return
 
-            if self.is_complete():
-                await self.stop_downloads()
+                    await self._download_piece()
+                    if (self.get_downloaded_piece_count() < self._total_piece_count) and self._is_downloading:
+                        continue
+
+                    if await self.is_complete():
+                        await self.stop_downloads()
+                        return
+            except Exception as e:
+                if self._is_downloading:
+                    print(f"Download loop error: {e}")
 
         async with asyncio.TaskGroup() as tg:
             for _ in range(self.MAX_IN_FLIGHT_PIECES):
@@ -148,15 +164,16 @@ class PieceManager:
     async def _validate_pieces(self):
         while self._is_downloading:
             await asyncio.sleep(self.VALIDATION_INTERVAL)
-            async with self._torrent_storage._downloaded_pieces_lock:
-                downloaded_piece_indexes = list(self._torrent_storage._downloaded_pieces)
-
-            for piece_index in downloaded_piece_indexes:
+            
+            for piece_index in await self._torrent_storage.get_downloaded_pieces():
                 is_valid = await self._torrent_storage._validate_piece(piece_index)
                 if not is_valid:
                     await self._torrent_storage.delete_piece(piece_index)
                     async with self._bitfield_lock:
                         self._bitfield = protocol_encoder.clear_piece_in_bitfield(self._bitfield, piece_index)
+                    async with self._requested_pieces_lock:
+                        if piece_index in self._requested_pieces:
+                            self._requested_pieces.remove(piece_index)
 
     async def stop_downloads(self):
         """stops all ongoing downloads and cancels the download tasks"""
@@ -213,8 +230,8 @@ class PieceManager:
     def is_downloading(self) -> bool:
         return self._is_downloading
     
-    def is_complete(self) -> bool:
-        return self.get_downloaded_piece_count() == self._total_piece_count and self._torrent_storage.is_complete()
+    async def is_complete(self) -> bool:
+        return self.get_downloaded_piece_count() == self._total_piece_count and await self._torrent_storage.is_complete()
     
     def get_downloaded_piece_count(self) -> int:
         count = 0
@@ -224,7 +241,7 @@ class PieceManager:
         return count
     
     async def _download_piece(self) -> None:
-        if not self._is_downloading or self.is_complete():
+        if not self._is_downloading or await self.is_complete():
             return
 
         piece_index = await self._select_next_piece()
@@ -241,14 +258,20 @@ class PieceManager:
         
         piece = peer.get_piece(piece_index)
         if piece is not None:
-            await piece.wait_until_complete()
+            try:
+                await asyncio.wait_for(piece.wait_until_complete(), timeout=self.PIECE_DOWNLOAD_TIMEOUT)
+                
+                async with self._bitfield_lock:
+                    self._bitfield = protocol_encoder.set_piece_in_bitfield(self._bitfield, piece_index)
             
-            async with self._bitfield_lock:
-                self._bitfield = protocol_encoder.set_piece_in_bitfield(self._bitfield, piece_index)
-        
-            async with self._requested_pieces_lock:
-                if piece_index in self._requested_pieces:
-                    self._requested_pieces.remove(piece_index)
+                async with self._requested_pieces_lock:
+                    if piece_index in self._requested_pieces:
+                        self._requested_pieces.remove(piece_index)
+            except asyncio.TimeoutError:
+                print(f"Piece {piece_index} download timeout")
+                async with self._requested_pieces_lock:
+                    if piece_index in self._requested_pieces:
+                        self._requested_pieces.remove(piece_index)
 
         
     async def _select_next_piece(self) -> Optional[int]:
@@ -268,16 +291,12 @@ class PieceManager:
                         continue  
                 piece_occs[piece_index] += 1
 
-        rarest_piece_idx = 0
-        min_occs = piece_occs[0]
+        rarest_piece_idx = None
+        min_occs = float('inf')
         for piece_index in range(self._total_piece_count):  
-            
-            if piece_occs[piece_index] < min_occs and piece_occs[piece_index] > 0:
+            if piece_occs[piece_index] > 0 and piece_occs[piece_index] < min_occs:
                 min_occs = piece_occs[piece_index]
                 rarest_piece_idx = piece_index
-
-        if min_occs == 0:
-            return None
 
         return rarest_piece_idx
 

@@ -92,6 +92,14 @@ class TorrentStorage:
         async with self._downloaded_pieces_lock:
             self._downloaded_pieces.discard(piece_index)
 
+    async def get_downloaded_pieces(self) -> set[int]:
+        async with self._downloaded_pieces_lock:
+            return set(self._downloaded_pieces)
+
+    async def has_piece(self, piece_index: int) -> bool:
+        async with self._downloaded_pieces_lock:
+            return piece_index in self._downloaded_pieces
+
     async def _validate_piece(self, piece_index: int) -> bool:
         assembled_piece = await self._read_piece_from_disk(piece_index)
         if assembled_piece is None:
