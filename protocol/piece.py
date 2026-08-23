@@ -23,5 +23,5 @@ class Piece:
     def is_complete(self) -> bool:
         return len(self.get_assembled_data()) == self.length
 
-    def wait_until_complete(self) -> None:
-        self.is_complete_event.wait()
+    async def wait_until_complete(self) -> None:
+        await self.is_complete_event.wait()

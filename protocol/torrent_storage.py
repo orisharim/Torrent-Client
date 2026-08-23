@@ -4,27 +4,21 @@ from typing import Optional
 import asyncio
 import fcntl
 from piece import Piece
+from torrent import Torrent
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
 
 class TorrentStorage:
-    def __init__(self, piece_length: int, total_piece_count: int, files: list[tuple[list[str], int]] | None = None, base_path: str = "downloads"):
-        """
-        Initialize TorrentStorage for single or multi-file torrents.
-        
-        Args:
-            piece_length: The length of each piece in bytes
-            total_piece_count: Total number of pieces in the torrent
-            files: List of (path_parts, file_length) tuples. If None, assumes single file.
-            base_path: Base directory for storing downloaded files
-        """
-        self._piece_length = piece_length
-        self._total_piece_count = total_piece_count
+    def __init__(self, torrent_metadata: Torrent, base_path: str = "downloads"):
+    
+        self._piece_length = torrent_metadata.piece_length
+        self._torrent_metadata = torrent_metadata
+        self._total_piece_count = len(torrent_metadata.pieces)
         self._base_path = Path(base_path)
         self._downloaded_pieces: set[int] = set()
         self._downloaded_pieces_lock = asyncio.Lock()
         
-        self.files = files or [(["download"], piece_length * total_piece_count)]
+        self.files = torrent_metadata.files or [(["download"], self._piece_length * self._total_piece_count)]
         self._build_file_offset_map()
 
     def get_downloaded_pieces(self) -> set[int]:
@@ -75,7 +69,7 @@ class TorrentStorage:
         return self._get_file_spans_for_range(piece_start, piece_end)
     
     async def add_piece(self, piece_index: int,begin: Optional[int] , block_data: bytes) -> None:
-        if self._write_piece_to_disk(piece_index, begin, block_data):
+        if await self._write_piece_to_disk(piece_index, begin, block_data):
             async with self._downloaded_pieces_lock:
                 self._downloaded_pieces.add(piece_index)
 
@@ -99,7 +93,7 @@ class TorrentStorage:
             self._downloaded_pieces.discard(piece_index)
 
     async def _validate_piece(self, piece_index: int) -> bool:
-        assembled_piece = self._read_piece_from_disk(piece_index)
+        assembled_piece = await self._read_piece_from_disk(piece_index)
         if assembled_piece is None:
             return False
         piece_hash = sha1(assembled_piece).digest()
@@ -120,7 +114,7 @@ class TorrentStorage:
                 return False
         return True
     
-    def _write_piece_to_disk(self, piece_index: int, begin: Optional[int] ,data: bytes) -> bool:
+    async def _write_piece_to_disk(self, piece_index: int, begin: Optional[int] ,data: bytes) -> bool:
         file_spans = self._get_file_spans_for_piece(piece_index)
         bytes_written = 0
 
@@ -150,12 +144,12 @@ class TorrentStorage:
 
     async def restore_pieces_from_disk(self) -> None:
         for idx in range(self._total_piece_count):
-            data = self._read_piece_from_disk(idx)
+            data = await self._read_piece_from_disk(idx)
             if data:
                 async with self._downloaded_pieces_lock:
                     self._downloaded_pieces.add(idx)
     
-    def _read_piece_from_disk(self, piece_index: int) -> Optional[bytes]:
+    async def _read_piece_from_disk(self, piece_index: int) -> Optional[bytes]:
         file_spans = self._get_file_spans_for_piece(piece_index)
         piece_data = bytearray()
         

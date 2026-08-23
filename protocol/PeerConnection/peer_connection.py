@@ -9,6 +9,8 @@ from torrent_storage import TorrentStorage
 class PeerConnection:
     DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 10.0
+    BITFIELD_RECEIVE_TIMEOUT = 10.0
+    BITFIELD_INTERVAL = 1.0
     HEARTBEAT_INTERVAL = 60.0
     DEAD_CONNECTION_TIMEOUT = 120.0
     UPLOAD_TIMEOUT = 30.0
@@ -93,6 +95,13 @@ class PeerConnection:
     async def start_message_loop(self) -> None:
         await self.stop_message_loop()
         await self.connect()
+
+        await self.send_handshake()
+        await self.send_bitfield(self._state.get_bitfield())
+
+        if await self._wait_for_bitfield() is None:
+            await self.disconnect()
+            raise ConnectionError("failed to receive bitfield from peer")
 
         if self._receive_message_loop_task is None or self._receive_message_loop_task.done():
             self._receive_message_loop_task = asyncio.create_task(self._message_loop())
@@ -245,11 +254,9 @@ class PeerConnection:
         self._requested_pieces[piece_index].add_block(begin, block_data)
 
         if self._requested_pieces[piece_index].is_complete():
-            piece_data = self._requested_pieces[piece_index].get_data()
-            if piece_data is not None:
-                self._storage.write_piece(piece_index, piece_data)
-                self._state.set_piece_in_bitfield(piece_index)
-                self._requested_pieces.pop(piece_index, None)
+            piece_data = self._requested_pieces[piece_index].get_assembled_data()
+            await self._storage.add_piece(piece_index, None, piece_data)
+            self._requested_pieces.pop(piece_index, None)
         
     async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
@@ -285,6 +292,16 @@ class PeerConnection:
             raise ConnectionError("not connected to peer or connection is closing")
         await asyncio.wait_for(self._writer.drain(), timeout=self.CONNECTION_TIMEOUT)
 
+    async def _wait_for_bitfield(self) -> Optional[bytes]:
+        start_time = time.monotonic()
+        while True:
+            bitfield = self._state.get_bitfield()
+            if bitfield is not None:
+                return bitfield
+            if (time.monotonic() - start_time) > self.BITFIELD_RECEIVE_TIMEOUT:
+                return None
+            await asyncio.sleep(self.BITFIELD_INTERVAL)
+
     async def _heartbeat(self) -> None:
         while True:
             await asyncio.sleep(self.HEARTBEAT_INTERVAL)
@@ -316,7 +333,7 @@ class PeerConnection:
 
         self._last_message_receive_time = time.monotonic()
         _, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
-        self._state.remote_peer_id = remote_peer_id
+        self._state.peer_id = remote_peer_id
 
     async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
         if self._closing:
@@ -350,6 +367,10 @@ class PeerConnection:
         await self.send_message(self.MESSAGE_HAVE, payload)
 
     async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
+        if self._state.is_peer_choking():
+            return
+        if self._state.is_am_interested() is False:
+            await self.send_interested()
         payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
         await self.send_message(self.MESSAGE_REQUEST, payload)
     
@@ -383,7 +404,7 @@ class PeerConnection:
 
             if requests:
                 await asyncio.gather(*requests)
-        finally:
+        except Exception:
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop(piece_index, None)
 
@@ -398,12 +419,20 @@ class PeerConnection:
         reader = self._reader
         return reader is not None and writer is not None and not writer.is_closing()
 
+    async def is_message_loop_running(self) -> bool:
+        return self._receive_message_loop_task is not None and not self._receive_message_loop_task.done()
+
     async def get_bitfield(self) -> Optional[bytes]:
         return self._state.get_bitfield()
 
     def get_piece(self, piece_index: int) -> Optional[Piece]:
         return self._requested_pieces.get(piece_index, None)
 
-    
+    def get_requested_pieces(self) -> list[int]:
+        return list(self._requested_pieces.keys())
             
-    
+    def can_download_piece(self, piece_index: int) -> bool:
+        bitfield = self._state.get_bitfield()
+        if bitfield is None:
+            return False
+        return protocol_encoder.check_bitfield_has_piece(bitfield, piece_index) and not self._state.is_peer_choking()

@@ -6,8 +6,8 @@ class PeerState:
         self.reset()
 
     def reset(self) -> None:
-        self.remote_peer_id: Optional[bytes] = None
-        self.bitfield: Optional[bytes] = None
+        self.peer_id: Optional[bytes] = None
+        self.peer_bitfield: Optional[bytes] = None
         
         self.am_choking = True
         self.am_interested = False
@@ -16,14 +16,14 @@ class PeerState:
         self.peer_interested = False
 
     def update_bitfield(self, bitfield: Optional[bytes]) -> None:
-        self.bitfield = bitfield
+        self.peer_bitfield = bitfield
 
     def set_piece_in_bitfield(self, piece_index: int) -> bytes:
-        self.bitfield = protocol_encoder.set_piece_in_bitfield(self.bitfield, piece_index)
-        return self.bitfield
+        self.peer_bitfield = protocol_encoder.set_piece_in_bitfield(self.peer_bitfield, piece_index)
+        return self.peer_bitfield
     
     def get_bitfield(self) -> Optional[bytes]:
-        return self.bitfield
+        return self.peer_bitfield
 
     def set_am_choking(self, value: bool) -> None:
         self.am_choking = value

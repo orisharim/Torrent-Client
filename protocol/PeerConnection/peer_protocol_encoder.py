@@ -115,7 +115,7 @@ def clear_piece_in_bitfield(bitfield: bytes | None, piece_index: int) -> bytes:
         + bitfield[byte_index + 1:]
     )
 
-def check_bitfield_has_piece(self, bitfield: bytes, piece_index: int) -> bool:
+def check_bitfield_has_piece(bitfield: bytes, piece_index: int) -> bool:
     byte_index = piece_index // 8
     if byte_index < 0 or byte_index >= len(bitfield):
         return False
