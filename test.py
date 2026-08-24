@@ -24,7 +24,7 @@ async def main():
 
     peers = tracker.get_peers(torrent, peer_id=b'-PC0001-123456789012', port=6881)
 
-    peer_info = peers[2] if peers else None
+    peer_info = peers[1] if peers else None
 
     print("peer info:", peer_info)
     peer_connection = PeerConnection(peer_info[0], peer_info[1], torrent.info_hash, b'-PC0001-123456789012', TorrentStorage(torrent, "./downloads"))

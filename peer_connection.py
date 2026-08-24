@@ -324,8 +324,6 @@ class PeerConnection:
         except Exception:
             await self.disconnect()
 
-        print("response:", response)
-
         self._last_message_receive_time = time.monotonic()
         remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
         self._state.set_remote_peer_id(remote_peer_id)
