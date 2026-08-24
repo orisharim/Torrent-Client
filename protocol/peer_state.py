@@ -42,3 +42,9 @@ class PeerState:
 
     def is_am_interested(self) -> bool:
         return self.am_interested
+
+    def set_remote_peer_id(self, peer_id: bytes) -> None:
+        self.peer_id = peer_id
+
+    def get_remote_peer_id(self) -> Optional[bytes]:
+        return self.peer_id

@@ -51,6 +51,7 @@ class PeerConnection:
         self._connect_lock = asyncio.Lock()
         self._disconnect_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
+        self._state.update_bitfield(protocol_encoder.generate_empty_bitfield(total_piece_count = self._storage.get_total_piece_count()))
 
     async def connect(self) -> None:
         if self._closing:
@@ -96,12 +97,9 @@ class PeerConnection:
         await self.stop_message_loop()
         await self.connect()
 
+        await self._storage.restore_pieces_from_disk()
         await self.send_handshake()
-        await self.send_bitfield(self._state.get_bitfield())
-
-        if await self._wait_for_bitfield() is None:
-            await self.disconnect()
-            raise ConnectionError("failed to receive bitfield from peer")
+        await self.send_bitfield(self._storage.get_bitfield())
 
         if self._receive_message_loop_task is None or self._receive_message_loop_task.done():
             self._receive_message_loop_task = asyncio.create_task(self._message_loop())
@@ -164,6 +162,8 @@ class PeerConnection:
             return  # keepalive message
         message = await self._read_exactly(message_length)
         message_id, payload = message[0], message[1:]
+
+        print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
 
         if message_id == self.MESSAGE_CHOKE:
             await self._on_choke(payload)
@@ -292,16 +292,6 @@ class PeerConnection:
             raise ConnectionError("not connected to peer or connection is closing")
         await asyncio.wait_for(self._writer.drain(), timeout=self.CONNECTION_TIMEOUT)
 
-    async def _wait_for_bitfield(self) -> Optional[bytes]:
-        start_time = time.monotonic()
-        while True:
-            bitfield = self._state.get_bitfield()
-            if bitfield is not None:
-                return bitfield
-            if (time.monotonic() - start_time) > self.BITFIELD_RECEIVE_TIMEOUT:
-                return None
-            await asyncio.sleep(self.BITFIELD_INTERVAL)
-
     async def _heartbeat(self) -> None:
         while True:
             await asyncio.sleep(self.HEARTBEAT_INTERVAL)
@@ -329,18 +319,29 @@ class PeerConnection:
                 
         await self._write_packet(handshake)
         
-        response = await self._read_exactly(68)
+        try:
+            response = await self._read_exactly(68)
+        except Exception:
+            await self.disconnect()
+
+        print("response:", response)
 
         self._last_message_receive_time = time.monotonic()
-        _, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
-        self._state.peer_id = remote_peer_id
+        remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
+        self._state.set_remote_peer_id(remote_peer_id)
+        if remote_info_hash != self._info_hash:
+            await self.disconnect()
+            raise ValueError("peer responded with a different info_hash")
 
     async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
         if self._closing:
             raise ConnectionError("peer connection is closing")
 
         await self.connect()
-        packet = protocol_encoder.pack_message(message_id, payload) if message_id is not None else protocol_encoder.pack_keepalive()
+        if message_id is None or payload is None:
+            packet = protocol_encoder.pack_keepalive()
+        else:
+            packet = protocol_encoder.pack_message(message_id, payload)
         await self._write_packet(packet)
                 
     async def send_interested(self) -> None:

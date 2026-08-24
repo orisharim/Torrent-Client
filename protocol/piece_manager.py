@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from typing import Optional
-from PeerConnection.peer_connection import PeerConnection
+from peer_connection import PeerConnection
 from piece import Piece
 from torrent_storage import TorrentStorage
 from torrent import Torrent
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
-import PeerConnection.peer_protocol_encoder as protocol_encoder
+import peer_protocol_encoder as protocol_encoder
 
 class PieceManager:
 
@@ -34,15 +34,12 @@ class PieceManager:
             peer = PeerConnection(ip, port, torrent_metadata.info_hash, peer_id, self._torrent_storage)
             self._peers.append(peer)
 
-
-        self._bitfield: bytes = protocol_encoder.generate_empty_bitfield()  
         self._requested_pieces: list[int] = []
 
         self._is_downloading = False
         self._is_seeding = False
 
         self._peers_lock = asyncio.Lock()
-        self._bitfield_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
 
         self._reconnect_task: Optional[asyncio.Task] = None
@@ -64,15 +61,15 @@ class PieceManager:
 
     async def _sync_bitfield_with_storage(self) -> None:
         await self._torrent_storage.restore_pieces_from_disk()
-        bitfield = protocol_encoder.generate_empty_bitfield()
-        async with self._torrent_storage._downloaded_pieces_lock:
-            downloaded_piece_indexes = list(self._torrent_storage._downloaded_pieces)
+        async with self._torrent_storage._bitfield_lock:
+            bitfield = protocol_encoder.generate_empty_bitfield(self._total_piece_count)
+            async with self._torrent_storage._downloaded_pieces_lock:
+                downloaded_piece_indexes = list(self._torrent_storage._downloaded_pieces)
 
-        for piece_index in downloaded_piece_indexes:
-            bitfield = protocol_encoder.set_piece_in_bitfield(bitfield, piece_index)
+            for piece_index in downloaded_piece_indexes:
+                bitfield = protocol_encoder.set_piece_in_bitfield(bitfield, piece_index)
 
-        async with self._bitfield_lock:
-            self._bitfield = bitfield
+            self._torrent_storage._bitfield = bitfield
 
     async def connect_to_unconnected_peers(self) -> None:
         """Connects to any peers that are not currently connected"""
@@ -169,8 +166,7 @@ class PieceManager:
                 is_valid = await self._torrent_storage._validate_piece(piece_index)
                 if not is_valid:
                     await self._torrent_storage.delete_piece(piece_index)
-                    async with self._bitfield_lock:
-                        self._bitfield = protocol_encoder.clear_piece_in_bitfield(self._bitfield, piece_index)
+                    await self._torrent_storage.clear_piece_in_bitfield(piece_index)
                     async with self._requested_pieces_lock:
                         if piece_index in self._requested_pieces:
                             self._requested_pieces.remove(piece_index)
@@ -236,7 +232,7 @@ class PieceManager:
     def get_downloaded_piece_count(self) -> int:
         count = 0
         for i in range(self._total_piece_count):
-            if protocol_encoder.check_bitfield_has_piece(self._bitfield, i):
+            if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), i):
                 count += 1
         return count
     
@@ -261,8 +257,7 @@ class PieceManager:
             try:
                 await asyncio.wait_for(piece.wait_until_complete(), timeout=self.PIECE_DOWNLOAD_TIMEOUT)
                 
-                async with self._bitfield_lock:
-                    self._bitfield = protocol_encoder.set_piece_in_bitfield(self._bitfield, piece_index)
+                await self._torrent_storage.set_piece_in_bitfield(piece_index)
             
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:
@@ -287,7 +282,7 @@ class PieceManager:
 
             for piece_index in range(self._total_piece_count):  
                 async with self._requested_pieces_lock:
-                    if protocol_encoder.check_bitfield_has_piece(self._bitfield, piece_index) or piece_index in self._requested_pieces:
+                    if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index) or piece_index in self._requested_pieces:
                         continue  
                 piece_occs[piece_index] += 1
 
@@ -323,5 +318,5 @@ class PieceManager:
         return selected_peer
             
     def is_piece_downloaded(self, piece_index: int) -> bool:
-        return protocol_encoder.check_bitfield_has_piece(self._bitfield, piece_index)
+        return protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index)
 

@@ -5,6 +5,8 @@ import asyncio
 import fcntl
 from piece import Piece
 from torrent import Torrent
+import peer_protocol_encoder as protocol_encoder
+
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
 
@@ -17,14 +19,29 @@ class TorrentStorage:
         self._base_path = Path(base_path)
         self._downloaded_pieces: set[int] = set()
         self._downloaded_pieces_lock = asyncio.Lock()
-        
-        self.files = torrent_metadata.files or [(["download"], self._piece_length * self._total_piece_count)]
+        self._bitfield: bytes = protocol_encoder.generate_empty_bitfield(total_piece_count=self._total_piece_count)
+        self._bitfield_lock = asyncio.Lock()
+
+        self.files = torrent_metadata.files or [(["/download"], self._piece_length * self._total_piece_count)]
         self._build_file_offset_map()
 
     def get_downloaded_pieces(self) -> set[int]:
         self.restore_pieces_from_disk()
         return self._downloaded_pieces
+
+    def get_bitfield(self) -> bytes:
+        return self._bitfield
     
+    async def set_piece_in_bitfield(self, piece_index: int) -> None:
+        """Set a piece as downloaded in the bitfield."""
+        async with self._bitfield_lock:
+            self._bitfield = protocol_encoder.set_piece_in_bitfield(self._bitfield, piece_index)
+    
+    async def clear_piece_in_bitfield(self, piece_index: int) -> None:
+        """Clear a piece from the bitfield."""
+        async with self._bitfield_lock:
+            self._bitfield = protocol_encoder.clear_piece_in_bitfield(self._bitfield, piece_index)
+
     def _build_file_offset_map(self) -> None:
         """Build a map of file offsets for piece to file mapping."""
         self.file_offsets: list[tuple[Path, int, int]] = []  # (path, start_offset, length)
@@ -72,6 +89,7 @@ class TorrentStorage:
         if await self._write_piece_to_disk(piece_index, begin, block_data):
             async with self._downloaded_pieces_lock:
                 self._downloaded_pieces.add(piece_index)
+            await self.set_piece_in_bitfield(piece_index)
 
     async def delete_piece(self, piece_index: int) -> None:
         file_spans = self._get_file_spans_for_piece(piece_index)
@@ -91,6 +109,7 @@ class TorrentStorage:
         
         async with self._downloaded_pieces_lock:
             self._downloaded_pieces.discard(piece_index)
+        await self.clear_piece_in_bitfield(piece_index)
 
     async def get_downloaded_pieces(self) -> set[int]:
         async with self._downloaded_pieces_lock:
@@ -156,6 +175,10 @@ class TorrentStorage:
             if data:
                 async with self._downloaded_pieces_lock:
                     self._downloaded_pieces.add(idx)
+                await self.set_piece_in_bitfield(idx)
+
+    def get_total_piece_count(self) -> int:
+        return self._total_piece_count    
     
     async def _read_piece_from_disk(self, piece_index: int) -> Optional[bytes]:
         file_spans = self._get_file_spans_for_piece(piece_index)
