@@ -22,12 +22,16 @@ class TorrentStorage:
         self._bitfield: bytes = protocol_encoder.generate_empty_bitfield(total_piece_count=self._total_piece_count)
         self._bitfield_lock = asyncio.Lock()
 
-        self.files = torrent_metadata.files or [(["/download"], self._piece_length * self._total_piece_count)]
+        self.files = torrent_metadata.files_info
         self._build_file_offset_map()
 
-    def get_downloaded_pieces(self) -> set[int]:
-        self.restore_pieces_from_disk()
-        return self._downloaded_pieces
+    async def get_downloaded_pieces(self) -> set[int]:
+        async with self._downloaded_pieces_lock:
+            return set(self._downloaded_pieces)
+
+    async def is_piece_downloaded(self, piece_index: int) -> bool:
+        async with self._downloaded_pieces_lock:
+            return piece_index in self._downloaded_pieces
 
     def get_bitfield(self) -> bytes:
         return self._bitfield
@@ -130,14 +134,14 @@ class TorrentStorage:
         expected_hash = self._torrent_metadata.pieces[piece_index]
         return piece_hash == expected_hash
 
-    def delete_broken_pieces(self) -> None:
+    async def delete_broken_pieces(self) -> None:
         for piece_index in list(self._downloaded_pieces):
-            if not self._validate_piece(piece_index):
-                self.delete_piece(piece_index)
+            if not await self._validate_piece(piece_index):
+                await self.delete_piece(piece_index)
 
-    def is_complete(self) -> bool:
+    async def is_complete(self) -> bool:
         for piece_index in range(self._total_piece_count):
-            if not self._validate_piece(piece_index):
+            if not await self._validate_piece(piece_index):
                 return False
         return True
     
@@ -202,7 +206,7 @@ class TorrentStorage:
         
         return bytes(piece_data) if piece_data else None
     
-    def read_piece_bytes(self, piece_index: int, begin: int, length: int) -> Optional[bytes]:
+    async def read_piece_bytes(self, piece_index: int, begin: int, length: int) -> Optional[bytes]:
         """Read a portion of a piece from disk."""
         piece_start, _ = self._get_piece_location(piece_index)
         piece_length = self.get_piece_length(piece_index)

@@ -51,23 +51,32 @@ class PeerConnection:
         self._connect_lock = asyncio.Lock()
         self._disconnect_lock = asyncio.Lock()
         self._requested_pieces_lock = asyncio.Lock()
-        self._state.update_bitfield(protocol_encoder.generate_empty_bitfield(total_piece_count = self._storage.get_total_piece_count()))
 
-    async def connect(self) -> None:
+        self._state.update_bitfield(protocol_encoder.generate_empty_bitfield(total_piece_count = self._storage.get_total_piece_count()))
+        self._state.set_am_choking(True)
+        self._state.set_am_interested(False)
+        self._state.set_peer_choking(True)
+        self._state.set_peer_interested(False)
+
+    async def connect(self) -> bool:
         if self._closing:
-            raise ConnectionError("peer connection is closing")
+            return False
 
         async with self._connect_lock:
             if self._closing:
-                raise ConnectionError("peer connection is closing")
+                return False
             if self._writer is not None and not self._writer.is_closing() and self._reader is not None:
-                return
+                return True
 
             self._reader = None
             self._writer = None
-            self._reader, self._writer = await asyncio.wait_for(asyncio.open_connection(self._host, self._port), timeout=self.CONNECTION_TIMEOUT)
-            self._last_message_receive_time = time.monotonic()
-            self._last_message_send_time = time.monotonic()
+            try:
+                self._reader, self._writer = await asyncio.wait_for(asyncio.open_connection(self._host, self._port), timeout=self.CONNECTION_TIMEOUT)
+                self._last_message_receive_time = time.monotonic()
+                self._last_message_send_time = time.monotonic()
+                return True
+            except Exception:
+                return False
 
     async def disconnect(self) -> None:
         if self._closing:
@@ -93,19 +102,30 @@ class PeerConnection:
             finally:
                 self._closing = False
 
-    async def start_message_loop(self) -> None:
+    async def start_message_loop(self) -> bool:
         await self.stop_message_loop()
-        await self.connect()
+        if not await self.connect():
+            return False
 
-        await self._storage.restore_pieces_from_disk()
-        await self.send_handshake()
-        await self.send_bitfield(self._storage.get_bitfield())
+        try:
+            await self._storage.restore_pieces_from_disk()
+        except Exception as e:
+            print(f"Failed to restore pieces from disk: {e}")
+        
+        if not await self.send_handshake():
+            await self.disconnect()
+            return False
+
+        if not await self.send_bitfield(self._storage.get_bitfield()):
+            await self.disconnect()
+            return False
 
         if self._receive_message_loop_task is None or self._receive_message_loop_task.done():
             self._receive_message_loop_task = asyncio.create_task(self._message_loop())
 
         if self._heartbeat_task is None or self._heartbeat_task.done():
             self._heartbeat_task = asyncio.create_task(self._heartbeat())
+        return True
 
     async def stop_message_loop(self) -> None:
         await self._cancel_background_tasks()
@@ -163,7 +183,7 @@ class PeerConnection:
         message = await self._read_exactly(message_length)
         message_id, payload = message[0], message[1:]
 
-        print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
+        # print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
 
         if message_id == self.MESSAGE_CHOKE:
             await self._on_choke(payload)
@@ -199,9 +219,11 @@ class PeerConnection:
     async def _on_have(self, payload: bytes) -> None:
         piece_index = protocol_encoder.unpack_have_payload(payload)
         self._state.set_piece_in_bitfield(piece_index)
+        await self.update_interest()
 
     async def _on_bitfield(self, payload: bytes) -> None:
         self._state.update_bitfield(payload)
+        await self.update_interest()
 
     async def _on_request(self, payload: bytes) -> None:
         if self._state.am_choking:
@@ -246,7 +268,7 @@ class PeerConnection:
             return
         if piece_index not in self._requested_pieces:
             return
-        if self._storage.is_piece_downloaded(piece_index):
+        if await self._storage.is_piece_downloaded(piece_index):
             return
         if begin < 0 or len(block_data) <= 0 or begin >= self._storage.get_piece_length(piece_index):
             return
@@ -257,6 +279,7 @@ class PeerConnection:
             piece_data = self._requested_pieces[piece_index].get_assembled_data()
             await self._storage.add_piece(piece_index, None, piece_data)
             self._requested_pieces.pop(piece_index, None)
+            print(f"From {int.from_bytes(self._state.peer_id)} - Piece {piece_index} completed ")
         
     async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
@@ -313,81 +336,94 @@ class PeerConnection:
                     await self.disconnect()
                     break
 
-    async def send_handshake(self):
-        await self.connect()
+    async def send_handshake(self) -> bool:
+        if not await self.connect():
+            return False
         handshake = protocol_encoder.pack_handshake(self._info_hash, self._peer_id)
                 
-        await self._write_packet(handshake)
-        
         try:
+            await self._write_packet(handshake)
             response = await self._read_exactly(68)
         except Exception:
             await self.disconnect()
+            return False
 
         self._last_message_receive_time = time.monotonic()
-        remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
-        self._state.set_remote_peer_id(remote_peer_id)
-        if remote_info_hash != self._info_hash:
+        try:
+            remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
+            self._state.set_remote_peer_id(remote_peer_id)
+            if remote_info_hash != self._info_hash:
+                await self.disconnect()
+                return False
+            return True
+        except Exception:
             await self.disconnect()
-            raise ValueError("peer responded with a different info_hash")
+            return False
 
-    async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> None:
+    async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> bool:
         if self._closing:
-            raise ConnectionError("peer connection is closing")
+            return False
 
-        await self.connect()
+        if not await self.connect():
+            return False
+            
         if message_id is None or payload is None:
             packet = protocol_encoder.pack_keepalive()
         else:
             packet = protocol_encoder.pack_message(message_id, payload)
-        await self._write_packet(packet)
+        try:
+            await self._write_packet(packet)
+            return True
+        except Exception:
+            return False
                 
-    async def send_interested(self) -> None:
+    async def send_interested(self) -> bool:
         self._state.set_am_interested(True)
-        await self.send_message(self.MESSAGE_INTERESTED)
+        return await self.send_message(self.MESSAGE_INTERESTED)
     
-    async def send_not_interested(self) -> None:
+    async def send_not_interested(self) -> bool:
         self._state.set_am_interested(False)
-        await self.send_message(self.MESSAGE_NOT_INTERESTED)
+        return await self.send_message(self.MESSAGE_NOT_INTERESTED)
     
-    async def send_choke(self) -> None:
+    async def send_choke(self) -> bool:
         self._state.set_am_choking(True)
-        await self.send_message(self.MESSAGE_CHOKE)
+        return await self.send_message(self.MESSAGE_CHOKE)
     
-    async def send_unchoke(self) -> None:
+    async def send_unchoke(self) -> bool:
         self._state.set_am_choking(False)
-        await self.send_message(self.MESSAGE_UNCHOKE)
+        return await self.send_message(self.MESSAGE_UNCHOKE)
     
-    async def send_bitfield(self, bitfield: bytes) -> None:
-        await self.send_message(self.MESSAGE_BITFIELD, bitfield)
+    async def send_bitfield(self, bitfield: bytes) -> bool:
+        return await self.send_message(self.MESSAGE_BITFIELD, bitfield)
     
-    async def send_have(self, piece_index: int) -> None:
+    async def send_have(self, piece_index: int) -> bool:
         payload = protocol_encoder.pack_have_payload(piece_index)
-        await self.send_message(self.MESSAGE_HAVE, payload)
+        return await self.send_message(self.MESSAGE_HAVE, payload)
 
-    async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
+    async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> bool:
         if self._state.is_peer_choking():
-            return
+            return False
         if self._state.is_am_interested() is False:
-            await self.send_interested()
+            if not await self.send_interested():
+                return False
         payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
-        await self.send_message(self.MESSAGE_REQUEST, payload)
+        return await self.send_message(self.MESSAGE_REQUEST, payload)
     
-    async def send_cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> None:
+    async def send_cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> bool:
         payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
-        await self.send_message(self.MESSAGE_CANCEL, payload) 
+        return await self.send_message(self.MESSAGE_CANCEL, payload) 
 
-    async def send_piece_request(self, piece_index: int) -> None:
+    async def send_piece_request(self, piece_index: int) -> bool:
         async with self._requested_pieces_lock:
             if piece_index in self._requested_pieces:
-                return
+                return False
             piece = Piece(piece_index, self._storage.get_piece_length(piece_index))
             self._requested_pieces[piece_index] = piece
 
         try:
             piece_length = self._storage.get_piece_length(piece_index)
             if piece_length <= 0:
-                return
+                return False
 
             semaphore = asyncio.Semaphore(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
             requests = []
@@ -395,17 +431,20 @@ class PeerConnection:
             for begin in range(0, piece_length, self.DEFAULT_BLOCK_LENGTH):
                 length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
 
-                async def request_block(offset: int, block_length: int) -> None:
+                async def request_block(offset: int, block_length: int) -> bool:
                     async with semaphore:
-                        await self.send_block_request(piece_index, offset, block_length)
+                        return await self.send_block_request(piece_index, offset, block_length)
 
                 requests.append(request_block(begin, length))
 
             if requests:
-                await asyncio.gather(*requests)
+                results = await asyncio.gather(*requests)
+                return all(results)
+            return True
         except Exception:
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop(piece_index, None)
+            return False
 
     async def is_choked(self) -> bool:
         return self._state.is_peer_choking()
@@ -435,3 +474,37 @@ class PeerConnection:
         if bitfield is None:
             return False
         return protocol_encoder.check_bitfield_has_piece(bitfield, piece_index) and not self._state.is_peer_choking()
+
+    async def cancel_piece(self, piece_index: int) -> None:
+        async with self._requested_pieces_lock:
+            piece = self._requested_pieces.pop(piece_index, None)
+        
+        if piece is not None:
+            piece_length = self._storage.get_piece_length(piece_index)
+            for begin in range(0, piece_length, self.DEFAULT_BLOCK_LENGTH):
+                if begin not in piece.blocks:
+                    length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
+                    try:
+                        await self.send_cancel_request(piece_index, begin, length)
+                    except Exception:
+                        pass
+
+    async def update_interest(self) -> bool:
+        peer_bitfield = self._state.get_bitfield()
+        if peer_bitfield is None:
+            return False
+        
+        has_interesting_pieces = False
+        my_bitfield = self._storage.get_bitfield()
+        for idx in range(self._storage.get_total_piece_count()):
+            if protocol_encoder.check_bitfield_has_piece(peer_bitfield, idx) and not protocol_encoder.check_bitfield_has_piece(my_bitfield, idx):
+                has_interesting_pieces = True
+                break
+        
+        if has_interesting_pieces:
+            if not self._state.is_am_interested():
+                return await self.send_interested()
+        else:
+            if self._state.is_am_interested():
+                return await self.send_not_interested()
+        return True

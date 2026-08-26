@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from typing import Optional
 from peer_connection import PeerConnection
@@ -19,7 +18,7 @@ class PieceManager:
     VALIDATION_INTERVAL = 30.0
     PIECE_DOWNLOAD_TIMEOUT = 120.0
 
-    MAX_IN_FLIGHT_PIECES = 20
+    MAX_IN_FLIGHT_PIECES = 30
     MAX_IN_FLIGHT_PIECES_PER_PEER = 5
 
     def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata: Torrent, download_path: str) -> None:
@@ -44,6 +43,7 @@ class PieceManager:
 
         self._reconnect_task: Optional[asyncio.Task] = None
         self._validation_task: Optional[asyncio.Task] = None
+        self._download_tasks: list[asyncio.Task] = []
 
     async def set_peers(self, peers_info: list[tuple[str, int]]):
         await self.close_all()
@@ -79,7 +79,7 @@ class PieceManager:
             for peer in peers_snapshot:
                 if await peer.is_connected():
                     continue
-                tg.create_task(peer.connect())
+                tg.create_task(self._connect_to_peer(peer))
 
     async def connect_to_all_peers(self) -> None:
         """Closes all existing connections and connects to all peers"""
@@ -89,7 +89,23 @@ class PieceManager:
             peers_snapshot = list(self._peers)
         async with asyncio.TaskGroup() as tg:
             for peer in peers_snapshot:
-                tg.create_task(peer.connect())
+                tg.create_task(self._connect_to_peer(peer))
+
+    async def _connect_to_peer(self, peer: PeerConnection) -> bool:
+        try:
+            success = await peer.connect()
+            if not success:
+                print(f"Failed to connect to peer {peer._host}:{peer._port}")
+                return False
+
+            if not await peer.start_message_loop():
+                print(f"Failed to start message loop for peer {peer._host}:{peer._port}")
+                return False
+
+            return True
+        except Exception as e:
+            print(f"Exception connecting to peer {peer._host}:{peer._port} - {e}")
+            return False
 
     async def close_all(self) -> None:
         """Closes all peer connections and cancels all ongoing downloads"""
@@ -114,13 +130,9 @@ class PieceManager:
         
         message_loop_started = False
         for peer in peers_snapshot:
-            if not await peer.is_message_loop_running():
-                try:
-                    await peer.connect()
-                    await peer.start_message_loop()
-                    message_loop_started = True
-                except Exception as e:
-                    print(f"Failed to start message loop for peer {peer._host}: {e}")
+            if await peer.is_message_loop_running():
+                message_loop_started = True
+                break
         
         if not message_loop_started:
             print("Failed to start message loop with any peer")
@@ -135,7 +147,9 @@ class PieceManager:
                     if not self._is_downloading or await self.is_complete():
                         return
 
-                    await self._download_piece()
+                    downloaded = await self._download_piece()
+                    if not downloaded:
+                        await asyncio.sleep(1.0)
                     if (self.get_downloaded_piece_count() < self._total_piece_count) and self._is_downloading:
                         continue
 
@@ -146,9 +160,9 @@ class PieceManager:
                 if self._is_downloading:
                     print(f"Download loop error: {e}")
 
-        async with asyncio.TaskGroup() as tg:
-            for _ in range(self.MAX_IN_FLIGHT_PIECES):
-                tg.create_task(download_loop())
+        self._download_tasks = []
+        for _ in range(self.MAX_IN_FLIGHT_PIECES):
+            self._download_tasks.append(asyncio.create_task(download_loop()))
 
     async def _reconnect(self):
         while self._is_downloading:
@@ -195,6 +209,16 @@ class PieceManager:
         self._validation_task = None
         self._reconnect_task = None
 
+        # cancel the download tasks
+        current_task = asyncio.current_task()
+        for task in self._download_tasks:
+            if task is not current_task:
+                task.cancel()
+        tasks_to_await = [t for t in self._download_tasks if t is not current_task]
+        if tasks_to_await:
+            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+        self._download_tasks = []
+
         # send not interested to the peers
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
@@ -227,7 +251,7 @@ class PieceManager:
         return self._is_downloading
     
     async def is_complete(self) -> bool:
-        return self.get_downloaded_piece_count() == self._total_piece_count and await self._torrent_storage.is_complete()
+        return self.get_downloaded_piece_count() == self._total_piece_count and self._torrent_storage.is_complete()
     
     def get_downloaded_piece_count(self) -> int:
         count = 0
@@ -236,19 +260,21 @@ class PieceManager:
                 count += 1
         return count
     
-    async def _download_piece(self) -> None:
+    async def _download_piece(self) -> bool:
         if not self._is_downloading or await self.is_complete():
-            return
+            return False
 
         piece_index = await self._select_next_piece()
         if piece_index is None:
-            return 
+            return False 
 
         peer = await self._select_peer_for_piece(piece_index)
         if peer is None:
-            return
+            return False
 
-        await peer.send_piece_request(piece_index)
+        if not await peer.send_piece_request(piece_index):
+            return False
+            
         async with self._requested_pieces_lock:
             self._requested_pieces.append(piece_index)
         
@@ -262,11 +288,19 @@ class PieceManager:
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:
                         self._requested_pieces.remove(piece_index)
+                return True
             except asyncio.TimeoutError:
                 print(f"Piece {piece_index} download timeout")
+                await peer.cancel_piece(piece_index)
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:
                         self._requested_pieces.remove(piece_index)
+                return False
+        else:
+            async with self._requested_pieces_lock:
+                if piece_index in self._requested_pieces:
+                    self._requested_pieces.remove(piece_index)
+            return False
 
         
     async def _select_next_piece(self) -> Optional[int]:
@@ -275,15 +309,19 @@ class PieceManager:
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
 
+        async with self._requested_pieces_lock:
+            requested_pieces_snapshot = set(self._requested_pieces)
+
+        my_bitfield = self._torrent_storage.get_bitfield()
+
         for peer in peers_snapshot:
             peer_bitfield = await peer.get_bitfield()
             if peer_bitfield is None or len(peer_bitfield) == 0 or len(peer_bitfield) < (self._total_piece_count + 7) // 8:
                 continue
 
             for piece_index in range(self._total_piece_count):  
-                async with self._requested_pieces_lock:
-                    if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index) or piece_index in self._requested_pieces:
-                        continue  
+                if protocol_encoder.check_bitfield_has_piece(my_bitfield, piece_index) or piece_index in requested_pieces_snapshot:
+                    continue  
                 piece_occs[piece_index] += 1
 
         rarest_piece_idx = None
@@ -307,15 +345,15 @@ class PieceManager:
         if not peers_with_piece:
             return None
 
-        min_amount_requested = len(peers_with_piece[0].get_requested_pieces())
-        selected_peer = peers_with_piece[0]
-        for peer in peers_with_piece:
-            amount_requested = len(peer.get_requested_pieces())
-            if amount_requested < min_amount_requested:
-                min_amount_requested = amount_requested
-                selected_peer = peer
+        # Find the minimum amount requested among all eligible peers
+        min_amount = min(len(p.get_requested_pieces()) for p in peers_with_piece)
 
-        return selected_peer
+        # Filter all peers that have this minimum amount requested
+        best_peers = [p for p in peers_with_piece if len(p.get_requested_pieces()) == min_amount]
+
+        # Randomly choose one of the best peers to distribute the load
+        import random
+        return random.choice(best_peers)
             
     def is_piece_downloaded(self, piece_index: int) -> bool:
         return protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index)
