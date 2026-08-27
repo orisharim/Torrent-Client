@@ -7,6 +7,9 @@ from piece import Piece
 from torrent_storage import TorrentStorage
 
 class PeerConnection:
+    PRINT_INCOMING_MESSAGES = False
+    PRINT_DOWNLOADED_PIECES = False
+
     DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 10.0
     BITFIELD_RECEIVE_TIMEOUT = 10.0
@@ -65,17 +68,48 @@ class PeerConnection:
         async with self._connect_lock:
             if self._closing:
                 return False
-            if self._writer is not None and not self._writer.is_closing() and self._reader is not None:
+            if (self._writer is not None and 
+                self._reader is not None and 
+                not self._writer.is_closing() and 
+                self._receive_message_loop_task is not None and 
+                not self._receive_message_loop_task.done()):
                 return True
 
-            self._reader = None
-            self._writer = None
+            await self.disconnect()
+
             try:
-                self._reader, self._writer = await asyncio.wait_for(asyncio.open_connection(self._host, self._port), timeout=self.CONNECTION_TIMEOUT)
+                self._reader, self._writer = await asyncio.wait_for(
+                    asyncio.open_connection(self._host, self._port), 
+                    timeout=self.CONNECTION_TIMEOUT
+                )
                 self._last_message_receive_time = time.monotonic()
                 self._last_message_send_time = time.monotonic()
+
+                # Perform Handshake
+                handshake = protocol_encoder.pack_handshake(self._info_hash, self._peer_id)
+                self._writer.write(handshake)
+                await asyncio.wait_for(self._writer.drain(), timeout=self.CONNECTION_TIMEOUT)
+
+                response = await asyncio.wait_for(self._reader.readexactly(68), timeout=self.CONNECTION_TIMEOUT)
+                remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
+                self._state.set_remote_peer_id(remote_peer_id)
+                if remote_info_hash != self._info_hash:
+                    await self.disconnect()
+                    return False
+
+                # Send Bitfield
+                bitfield = self._storage.get_bitfield()
+                bitfield_packet = protocol_encoder.pack_message(self.MESSAGE_BITFIELD, bitfield)
+                self._writer.write(bitfield_packet)
+                await asyncio.wait_for(self._writer.drain(), timeout=self.CONNECTION_TIMEOUT)
+
+                # Start Message Loop & Heartbeat tasks
+                self._receive_message_loop_task = asyncio.create_task(self._message_loop())
+                self._heartbeat_task = asyncio.create_task(self._heartbeat())
+
                 return True
             except Exception:
+                await self.disconnect()
                 return False
 
     async def disconnect(self) -> None:
@@ -103,29 +137,7 @@ class PeerConnection:
                 self._closing = False
 
     async def start_message_loop(self) -> bool:
-        await self.stop_message_loop()
-        if not await self.connect():
-            return False
-
-        try:
-            await self._storage.restore_pieces_from_disk()
-        except Exception as e:
-            print(f"Failed to restore pieces from disk: {e}")
-        
-        if not await self.send_handshake():
-            await self.disconnect()
-            return False
-
-        if not await self.send_bitfield(self._storage.get_bitfield()):
-            await self.disconnect()
-            return False
-
-        if self._receive_message_loop_task is None or self._receive_message_loop_task.done():
-            self._receive_message_loop_task = asyncio.create_task(self._message_loop())
-
-        if self._heartbeat_task is None or self._heartbeat_task.done():
-            self._heartbeat_task = asyncio.create_task(self._heartbeat())
-        return True
+        return await self.connect()
 
     async def stop_message_loop(self) -> None:
         await self._cancel_background_tasks()
@@ -174,16 +186,17 @@ class PeerConnection:
             raise RuntimeError("Peer connection message loop terminated unexpectedly") from exc
 
     async def _read_message(self) -> None:
-        length_prefix = await self._read_exactly(4)
+        length_prefix = await self._read_exactly(4, timeout=self.DEAD_CONNECTION_TIMEOUT)
         self._last_message_receive_time = time.monotonic()
         message_length = protocol_encoder.unpack_message_length_prefix(length_prefix)
 
         if message_length == 0:
             return  # keepalive message
-        message = await self._read_exactly(message_length)
+        message = await self._read_exactly(message_length, timeout=self.CONNECTION_TIMEOUT)
         message_id, payload = message[0], message[1:]
 
-        # print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
+        if PeerConnection.PRINT_INCOMING_MESSAGES:
+            print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
 
         if message_id == self.MESSAGE_CHOKE:
             await self._on_choke(payload)
@@ -279,7 +292,9 @@ class PeerConnection:
             piece_data = self._requested_pieces[piece_index].get_assembled_data()
             await self._storage.add_piece(piece_index, None, piece_data)
             self._requested_pieces.pop(piece_index, None)
-            print(f"From {int.from_bytes(self._state.peer_id)} - Piece {piece_index} completed ")
+            
+            if PeerConnection.PRINT_DOWNLOADED_PIECES:
+                print(f"From {int.from_bytes(self._state.peer_id)} - Piece {piece_index} completed ")
         
     async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
@@ -290,11 +305,13 @@ class PeerConnection:
                 task, _ = task_info
                 task.cancel()
 
-    async def _read_exactly(self, size: int) -> bytes:
+    async def _read_exactly(self, size: int, timeout: Optional[float] = None) -> bytes:
             if self._reader is None:
                 raise ConnectionError("not connected to peer")
+            if timeout is None:
+                timeout = self.CONNECTION_TIMEOUT
             try:
-                return await asyncio.wait_for(self._reader.readexactly(size), timeout=self.CONNECTION_TIMEOUT)
+                return await asyncio.wait_for(self._reader.readexactly(size), timeout=timeout)
             except asyncio.TimeoutError as exc:
                 raise ConnectionError("peer read timed out") from exc
             except asyncio.IncompleteReadError as exc:
@@ -453,9 +470,11 @@ class PeerConnection:
         return self._state.is_am_interested()
      
     async def is_connected(self) -> bool:
-        writer = self._writer
-        reader = self._reader
-        return reader is not None and writer is not None and not writer.is_closing()
+        return (self._reader is not None and 
+                self._writer is not None and 
+                not self._writer.is_closing() and 
+                self._receive_message_loop_task is not None and 
+                not self._receive_message_loop_task.done())
 
     async def is_message_loop_running(self) -> bool:
         return self._receive_message_loop_task is not None and not self._receive_message_loop_task.done()
