@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import Optional
 import asyncio
 import fcntl
-
+import os
 from torrent import Torrent
-import peer_protocol_encoder as protocol_encoder
+import peers.peer_protocol_encoder as protocol_encoder
 
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
