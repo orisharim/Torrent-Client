@@ -9,13 +9,13 @@ from torrent_storage import TorrentStorage
 class PeerConnection:
     PRINT_INCOMING_MESSAGES = False
     PRINT_DOWNLOADED_PIECES = False
+    PRINT_UPLOADED_PIECES = True
+    
 
     DEFAULT_BLOCK_LENGTH = 16 * 1024
-    CONNECTION_TIMEOUT = 10.0
-    BITFIELD_RECEIVE_TIMEOUT = 10.0
-    BITFIELD_INTERVAL = 1.0
+    CONNECTION_TIMEOUT = 20.0
     HEARTBEAT_INTERVAL = 60.0
-    DEAD_CONNECTION_TIMEOUT = 120.0
+    CLOSE_CONNECTION_TIMEOUT = 120.0
     UPLOAD_TIMEOUT = 30.0
     
     MESSAGE_CHOKE = 0
@@ -51,11 +51,7 @@ class PeerConnection:
 
         self._state = PeerState()
         self._state.update_bitfield(protocol_encoder.generate_empty_bitfield(total_piece_count = self._storage.get_total_piece_count()))
-        self._state.set_am_choking(True)
-        self._state.set_am_interested(False)
-        self._state.set_peer_choking(True)
-        self._state.set_peer_interested(False)
-
+        
     @classmethod
     def from_address(cls, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> 'PeerConnection':
         peer = cls(info_hash, peer_id, storage)
@@ -237,7 +233,7 @@ class PeerConnection:
             raise RuntimeError("Peer connection message loop terminated unexpectedly") from exc
 
     async def _read_message(self) -> None:
-        length_prefix = await self._read_exactly(4, timeout=self.DEAD_CONNECTION_TIMEOUT)
+        length_prefix = await self._read_exactly(4, timeout=self.CLOSE_CONNECTION_TIMEOUT)
         self._last_message_receive_time = time.monotonic()
         message_length = protocol_encoder.unpack_message_length_prefix(length_prefix)
 
@@ -290,7 +286,7 @@ class PeerConnection:
         await self.update_interest()
 
     async def _on_request(self, payload: bytes) -> None:
-        if self._state.am_choking:
+        if self._state.get_am_choking() or not self._state.get_am_seeding():
             return
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "piece")
 
@@ -300,6 +296,8 @@ class PeerConnection:
                 return
             upload_task = asyncio.create_task(self._send_piece(piece_index, begin, length))
             self._upload_tasks[request_key] = (upload_task, time.monotonic())
+            if PeerConnection.PRINT_UPLOADED_PIECES:
+                print(f"Uploaded piece {piece_index} to {self._host}:{self._port}")
 
     async def _send_piece(self, piece_index: int, begin: int, length: int) -> None:
         if piece_index < 0 or piece_index >= self._storage._total_piece_count:
@@ -324,6 +322,12 @@ class PeerConnection:
         finally:
             async with self._upload_tasks_lock:
                 self._upload_tasks.pop((piece_index, begin), None)
+
+    async def start_seeding(self):
+        self._state.set_am_seeding(True)
+
+    async def stop_seeding(self):
+        self._state.set_am_seeding(False)
 
     async def _on_piece(self, payload: bytes) -> None:
         piece_index, begin, block_data = protocol_encoder.unpack_piece_payload(payload)
@@ -393,7 +397,7 @@ class PeerConnection:
                         task.cancel()
                         self._upload_tasks.pop(key, None)
 
-            if self._last_message_receive_time is not None and (time.monotonic() - self._last_message_receive_time) > self.DEAD_CONNECTION_TIMEOUT:
+            if self._last_message_receive_time is not None and (time.monotonic() - self._last_message_receive_time) > self.CLOSE_CONNECTION_TIMEOUT:
                 await self.disconnect()
                 break
 

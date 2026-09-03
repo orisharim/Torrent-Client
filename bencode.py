@@ -1,5 +1,5 @@
 # data is expected to be bytes, not str. i is the current index in the byte array. capture_info is a flag to indicate whether we should capture the byte range of the 'info' dict for later hashing.
-def decode(data: bytes, i: int = 0, capture_info=False):
+def decode_bencode(data: bytes, i: int = 0, capture_info=False):
     prefix = data[i:i+1]
 
     # Integer
@@ -16,7 +16,7 @@ def decode(data: bytes, i: int = 0, capture_info=False):
         info_bounds = None
 
         while data[j:j+1] != b'e':
-            item, j, child_bounds = decode(data, j, capture_info)
+            item, j, child_bounds = decode_bencode(data, j, capture_info)
             items.append(item)
 
             if child_bounds:
@@ -31,11 +31,11 @@ def decode(data: bytes, i: int = 0, capture_info=False):
         info_bounds = None
 
         while data[j:j+1] != b'e':
-            key, j, _ = decode(data, j, capture_info)
+            key, j, _ = decode_bencode(data, j, capture_info)
 
             # capture start BEFORE decoding value
             val_start = j
-            value, j, child_bounds = decode(data, j, capture_info)
+            value, j, child_bounds = decode_bencode(data, j, capture_info)
             val_end = j
 
             d[key] = value
@@ -67,20 +67,20 @@ def decode(data: bytes, i: int = 0, capture_info=False):
     else:
         raise ValueError(f"Invalid bencode at index {i}")
     
-def encode(value) -> bytes:
+def encode_bencode(value) -> bytes:
     if isinstance(value, int):
         return b'i' + str(value).encode() + b'e'
     elif isinstance(value, bytes):
         return str(len(value)).encode() + b':' + value
     elif isinstance(value, list):
-        return b'l' + b''.join(encode(item) for item in value) + b'e'
+        return b'l' + b''.join(encode_bencode(item) for item in value) + b'e'
     elif isinstance(value, dict):
         items = []
         for key in sorted(value.keys()):
             if not isinstance(key, bytes):
                 raise TypeError("Dictionary keys must be bytes")
-            items.append(encode(key))
-            items.append(encode(value[key]))
+            items.append(encode_bencode(key))
+            items.append(encode_bencode(value[key]))
         return b'd' + b''.join(items) + b'e'
     else:
         raise TypeError(f"Unsupported type for encoding: {type(value)}")

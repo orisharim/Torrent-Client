@@ -4,7 +4,7 @@ import time
 from typing import Optional
 from piece import Piece
 from torrent_storage import TorrentStorage
-from torrent import Torrent
+from torrent_file import TorrentFile
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
@@ -15,7 +15,7 @@ class PieceManager:
 
     PRINT_CONNECTION_AMOUNT = True
     PRINT_PEER_PIECE_REQUESTS = False
-    PRINT_DOWNLOAD_SPEED = True
+    PRINT_DOWNLOAD_SPEED = False
 
     VALIDATION_INTERVAL = 30.0
     PIECE_DOWNLOAD_TIMEOUT = 120.0
@@ -24,7 +24,7 @@ class PieceManager:
     MAX_IN_FLIGHT_PIECES = 50
     MAX_IN_FLIGHT_PIECES_PER_PEER = 10
 
-    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata: Torrent, download_path: str) -> None:
+    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata: TorrentFile, download_path: str) -> None:
         self._torrent_metadata = torrent_metadata
         self._peer_id = peer_id
         self._total_piece_count = len(torrent_metadata.pieces)
@@ -157,7 +157,6 @@ class PieceManager:
                 pass
 
         self._validation_task = None
-        self._reconnect_task = None
 
         # cancel the download tasks
         current_task = asyncio.current_task()
@@ -188,10 +187,12 @@ class PieceManager:
             self._requested_pieces.clear()
         
     async def stop_seeding(self):
+        await self._peers_manager.stop_seeding()
         self._is_seeding = False
     
     async def start_seeding(self):
         self._is_seeding = True
+        await self._peers_manager.start_seeding()
 
     def is_seeding(self) -> bool:
         return self._is_seeding

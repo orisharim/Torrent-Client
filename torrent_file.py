@@ -1,7 +1,6 @@
 import hashlib
 from typing import List, Tuple, Dict, Any, Optional
-from bencode import decode, encode
-
+from bencode import decode_bencode
 
 class TorrentFile:
     def __init__(self, path: str):
@@ -9,7 +8,7 @@ class TorrentFile:
         self._raw = self._read_file(path)
 
         # decoded structure (bencoded to python)
-        meta, _, info_bounds = decode(self._raw, capture_info=True)
+        meta, _, info_bounds = decode_bencode(self._raw, capture_info=True)
 
         self.meta = meta
         self.info_start, self.info_end = info_bounds
@@ -49,7 +48,7 @@ class TorrentFile:
             return f.read()
 
     def _decode(self):
-        data, _ = decode(self._raw)
+        data, _, _ = decode_bencode(self._raw)
         return data
 
     # extract fields

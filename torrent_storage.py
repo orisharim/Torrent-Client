@@ -4,7 +4,7 @@ from typing import Optional
 import asyncio
 import fcntl
 import os
-from torrent import Torrent
+from torrent_file import TorrentFile
 import peers.peer_protocol_encoder as protocol_encoder
 
 DEFAULT_BLOCK_LENGTH = 16 * 1024
@@ -62,7 +62,7 @@ def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]
 
 
 class TorrentStorage:
-    def __init__(self, torrent_metadata: Torrent, base_path: str = "downloads"):
+    def __init__(self, torrent_metadata: TorrentFile, base_path: str = "downloads"):
         self._piece_length = torrent_metadata.piece_length
         self._torrent_metadata = torrent_metadata
         self._total_piece_count = len(torrent_metadata.pieces)

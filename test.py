@@ -1,7 +1,7 @@
 from asyncio import timeouts
 from peers.peer_connection import PeerConnection
 from piece_manager import PieceManager
-from torrent import Torrent
+from torrent_file import TorrentFile
 from torrent_storage import TorrentStorage
 import tracker
 import os
@@ -16,23 +16,10 @@ async def main():
     global manager, time
     time = 0
 
-    torrent_file_path = "./ubuntu.torrent"
-    torrent = Torrent(torrent_file_path)
+    torrent = TorrentFile("/home/ori/Desktop/dunkirk.torrent")
 
-    try:
-        peers = tracker.get_peers(torrent, peer_id=b'-PC0001-123456789012', port=6881)
-    except Exception as e:
-        print(f"Tracker request failed ({e}). Using cached/fallback peer list...")
-        peers = [
-            ("185.125.190.59", 6905),
-            ("185.125.190.59", 6942),
-            ("2a01:e11:100e:cb60:4dfd:eb2f:e88f:bf7f", 51413),
-            ("2001:41d0:303:9b68::2", 17005),
-            ("2a01:e0a:ac9:fc01::2", 51413),
-            ("2a03:3b40:2c:1::3", 64666),
-            ("2607:fea8:fdf0:825b:74e1:7d39:3f9e", 51413),
-            ("2400:4050:a560:9c00:caa3:62ff:fec5:1a90", 1484)
-        ]
+
+    _, peers = await tracker.get_peers(torrent, peer_id=b'-PC0001-123456789012')
 
     # peer_info = peers[1] if peers else None
 
@@ -62,6 +49,7 @@ async def main():
 
     # Start the download process
     await manager.start_downloads()
+    await manager.start_seeding()
 
     # Wait for the download to complete
     while not await manager.is_complete():

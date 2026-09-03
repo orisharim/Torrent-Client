@@ -2,7 +2,7 @@ from typing_extensions import Optional
 from torrent_storage import TorrentStorage
 from peers.peer_connection import PeerConnection
 from typing import List, Tuple
-from torrent import Torrent
+from torrent_file import TorrentFile
 import asyncio
 
 class PeersManager:
@@ -10,7 +10,7 @@ class PeersManager:
     LISTEN_PORT: int = 6881
     RECONNECT_INTERVAL: float = 15.0
     
-    def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: Torrent, peer_id: bytes, torrent_storage: TorrentStorage) -> None:
+    def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: TorrentFile, peer_id: bytes, torrent_storage: TorrentStorage) -> None:
         self._peers: List[PeerConnection] = []
         self._peers_lock: asyncio.Lock = asyncio.Lock() 
         self._torrent_metadata = torrent_metadata
@@ -51,7 +51,7 @@ class PeersManager:
         while True:
             await asyncio.sleep(self.RECONNECT_INTERVAL)
             try:
-                await self._connect_to_unconnected_peers()
+                await self.connect_to_peers()
             except Exception:
                 pass
 
@@ -77,12 +77,6 @@ class PeersManager:
         return None
 
     async def connect_to_peers(self) -> None:
-        """Connects to any peers that are not currently connected"""
-        await self._connect_to_unconnected_peers()
-        if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = asyncio.create_task(self._reconnect())
-
-    async def _connect_to_unconnected_peers(self) -> None:
         async with self._peers_lock:
             peers_snapshot = list(self._peers)
         
@@ -90,6 +84,11 @@ class PeersManager:
             if not await peer.is_connected():
                 asyncio.create_task(self._connect_to_peer(peer))
 
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
+
+        await self.start_listening()
+    
     async def _connect_to_peer(self, peer: PeerConnection) -> bool:
         try:
             success = await peer.connect()
@@ -120,3 +119,12 @@ class PeersManager:
             for peer in self._peers:
                 await peer.close()
 
+    async def start_seeding(self):
+        async with self._peers_lock:
+            for peer in self._peers:
+                await peer.start_seeding()
+
+    async def stop_seeding(self):
+        async with self._peers_lock:
+            for peer in self._peers:
+                await peer.stop_seeding()
