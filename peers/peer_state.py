@@ -15,6 +15,8 @@ class PeerState:
         self._peer_choking = True
         self._peer_interested = False
 
+        self._am_seeding = False
+
     def update_bitfield(self, bitfield: Optional[bytes]) -> None:
         self._peer_bitfield = bitfield
 
@@ -51,3 +53,9 @@ class PeerState:
     
     def get_am_choking(self) -> bool:
         return self._am_choking
+
+    def get_am_seeding(self) -> bool:
+        return self._am_seeding
+
+    def set_am_seeding(self, am_seeding: bool) -> None:
+        self._am_seeding = am_seeding
