@@ -5,3 +5,4 @@ pytest
 pytest-asyncio
 bencode.py
 requests
+miniupnpc
