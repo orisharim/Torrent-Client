@@ -69,6 +69,9 @@ class TorrentStorage:
         self._base_path = Path(base_path)
         self._downloaded_pieces: set[int] = set()
         self._downloaded_pieces_lock = asyncio.Lock()
+        self._uploaded_pieces: set[int] = set()
+        self._uploaded_bytes = 0
+        self._uploaded_pieces_lock = asyncio.Lock()
         self._bitfield: bytes = protocol_encoder.generate_empty_bitfield(
             total_piece_count=self._total_piece_count
         )
@@ -78,33 +81,44 @@ class TorrentStorage:
         self._build_file_offset_map()
 
     async def get_downloaded_pieces(self) -> set[int]:
-        """Get the set of downloaded piece indices."""
         async with self._downloaded_pieces_lock:
             return set(self._downloaded_pieces)
 
+    async def record_uploaded_piece(self, piece_index: int, byte_count: int) -> None:
+        async with self._uploaded_pieces_lock:
+            self._uploaded_pieces.add(piece_index)
+            self._uploaded_bytes += byte_count
+
+    async def get_uploaded_pieces(self) -> set[int]:
+        async with self._uploaded_pieces_lock:
+            return set(self._uploaded_pieces)
+
+    async def get_uploaded_piece_count(self) -> int:
+        async with self._uploaded_pieces_lock:
+            return len(self._uploaded_pieces)
+
+    async def get_uploaded_bytes(self) -> int:
+        async with self._uploaded_pieces_lock:
+            return self._uploaded_bytes
+
     async def is_piece_downloaded(self, piece_index: int) -> bool:
-        """Check if a specific piece has been downloaded."""
         async with self._downloaded_pieces_lock:
             return piece_index in self._downloaded_pieces
 
     async def has_piece(self, piece_index: int) -> bool:
-        """Check if a specific piece has been downloaded. (Alias for is_piece_downloaded)"""
         async with self._downloaded_pieces_lock:
             return piece_index in self._downloaded_pieces
 
     def get_bitfield(self) -> bytes:
-        """Get the current bitfield representing downloaded pieces."""
         return self._bitfield
 
     async def set_piece_in_bitfield(self, piece_index: int) -> None:
-        """Set a piece as downloaded in the bitfield."""
         async with self._bitfield_lock:
             self._bitfield = protocol_encoder.set_piece_in_bitfield(
                 self._bitfield, piece_index
             )
 
     async def clear_piece_in_bitfield(self, piece_index: int) -> None:
-        """Clear a piece from the bitfield."""
         async with self._bitfield_lock:
             self._bitfield = protocol_encoder.clear_piece_in_bitfield(
                 self._bitfield, piece_index

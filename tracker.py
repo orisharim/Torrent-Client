@@ -5,11 +5,9 @@ import urllib.parse
 import urllib.request
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from torrent_file import TorrentFile
 from bencode import decode_bencode
 
 CONTACT_TIMEOUT = 10
-
 # events: (str is for the http and the num is for the udp)
 KEEP_ALIVE = ("", 0)
 COMPLETED = ("completed", 1)
@@ -80,7 +78,7 @@ def _extract_peers_from_dict(tracker_res: dict) -> List[Tuple[str, int]]:
     return peers
 
 
-def _parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tuple[str, int]]]:
+def parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tuple[str, int]]]:
     
     if not tracker_res or not isinstance(tracker_res, dict):
         return None, []
@@ -91,17 +89,19 @@ def _parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tupl
 
 
 async def get_peers(
-    torrent_file: TorrentFile,
+    tracker_url: str,
+    info_hash: bytes,
     peer_id: bytes,
     listening_port: int = 6881,
     event: Tuple[str, int] = KEEP_ALIVE,
     downloaded: int = 0,
     uploaded: int = 0,
-    left: int = None
+    left: int = 0
 ) -> Tuple[Optional[int], List[Tuple[str, int]]]:
     #contacts trackers and returns a tuple of (interval of when to contact next, list_of_peers)
     res = await contact_tracker(
-        torrent_file=torrent_file,
+        tracker_url=tracker_url,
+        info_hash=info_hash,
         peer_id=peer_id,
         listening_port=listening_port,
         event=event,
@@ -110,64 +110,53 @@ async def get_peers(
         left=left
     )
     if res:
-        return _parse_tracker_response(res)
+        return parse_tracker_response(res)
     return None, []
 
 
 async def contact_tracker(
-    torrent_file: TorrentFile,
+    tracker_url: str,
+    info_hash: bytes,
     peer_id: bytes,
     listening_port: int,
     event: Tuple[str, int] = KEEP_ALIVE,
     downloaded: int = 0,
     uploaded: int = 0,
-    left: int = None
+    left: int = 0
 ) -> Optional[Dict[str, Any]]:
 
     event_str = event[0] if event else ""
     event_num = event[1] if event else 0
-    if left is None:
-        left = torrent_file.length
-
-    for tracker_url in torrent_file.trackers:
-        print(f"Contacting tracker: {tracker_url}")
-        try:
-            res = None
-
-            if tracker_url.startswith("udp"):
-                res = await asyncio.to_thread(
-                    _contact_udp_tracker,
-                    tracker_url,
-                    torrent_file.info_hash,
-                    peer_id,
-                    listening_port,
-                    left,
-                    downloaded,
-                    uploaded,
-                    event_num
-                )
-            elif tracker_url.startswith("http"):
-                res = await asyncio.to_thread(
-                    _contact_http_tracker,
-                    tracker_url,
-                    torrent_file.info_hash,
-                    peer_id,
-                    listening_port,
-                    left,
-                    downloaded,
-                    uploaded,
-                    event_str
-                )
-
-            if res is not None:
-                return res
-
-        except Exception as e:
-            print(f"Failed to contact {tracker_url}: {e}")
-            continue
-
-    print("Failed to connect to any tracker")
-    return None
+    print(f"Contacting tracker: {tracker_url}")
+    try:
+        if tracker_url.startswith("udp"):
+            return await asyncio.to_thread(
+                _contact_udp_tracker,
+                tracker_url,
+                info_hash,
+                peer_id,
+                listening_port,
+                left,
+                downloaded,
+                uploaded,
+                event_num
+            )
+        if tracker_url.startswith("http"):
+            return await asyncio.to_thread(
+                _contact_http_tracker,
+                tracker_url,
+                info_hash,
+                peer_id,
+                listening_port,
+                left,
+                downloaded,
+                uploaded,
+                event_str
+            )
+        raise ValueError(f"Unsupported tracker URL: {tracker_url}")
+    except Exception as e:
+        print(f"Failed to contact {tracker_url}: {e}")
+        return None
 
 
 def _contact_http_tracker(

@@ -13,6 +13,7 @@ class PeersManager:
     def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: TorrentFile, peer_id: bytes, torrent_storage: TorrentStorage) -> None:
         self._peers: List[PeerConnection] = []
         self._peers_lock: asyncio.Lock = asyncio.Lock() 
+        self._peers_info = peers_info
         self._torrent_metadata = torrent_metadata
         self._peer_id = peer_id
         self._torrent_storage = torrent_storage
@@ -58,18 +59,21 @@ class PeersManager:
     async def set_peers(self, peers_info: list[tuple[str, int]]):
         """Closes all peer connections and sets the list of peers"""
         await self.close_connections()
+        self._peers_info = peers_info
         async with self._peers_lock:
             self._peers = []
             for ip, port in peers_info:
                 peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
                 self._peers.append(peer)
 
-    async def add_peers(self, new_peers_info: list[tuple[str, int]]):
-        """Adds new peers to the list of peers"""
+    async def update_peers(self, peers_info: list[tuple[str, int]]):
+        """Adds only tje new peers to the list of peers"""
         async with self._peers_lock:
-            for ip, port in new_peers_info:
-                peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
-                self._peers.append(peer)
+            for ip, port in peers_info:
+                if (ip, port) not in self._peers_info:
+                    peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
+                    self._peers_info.append((ip, port))
+                    self._peers.append(peer)
 
     async def get_peers(self) -> List[PeerConnection] | None:
         async with self._peers_lock:

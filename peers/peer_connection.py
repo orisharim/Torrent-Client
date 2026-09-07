@@ -71,8 +71,8 @@ class PeerConnection:
         peer._host = None
         peer._port = None
         try:
-            peername = writer.get_extra_info('peername')
-            if peername:
+            peername = writer.get_extra_info('peername') if writer else None
+            if peername is not None:
                 peer._host, peer._port = peername[0], peername[1]
         except Exception:
             pass
@@ -230,6 +230,7 @@ class PeerConnection:
         except Exception as exc:
             if not self._closing:
                 await self.disconnect()
+            pass
             raise RuntimeError("Peer connection message loop terminated unexpectedly") from exc
 
     async def _read_message(self) -> None:
@@ -316,9 +317,12 @@ class PeerConnection:
         payload = protocol_encoder.pack_piece_payload(piece_index, begin, data)
         try:
             await self.send_message(self.MESSAGE_PIECE, payload)
+            await self._storage.record_uploaded_piece(piece_index, len(data))
             
-        except Exception:
-            raise Exception(f"Failed to send piece {piece_index} at offset {begin} to peer")
+        except Exception as exc:
+            raise ConnectionError(
+                f"Failed to send piece {piece_index} at offset {begin} to peer"
+            ) from exc
         finally:
             async with self._upload_tasks_lock:
                 self._upload_tasks.pop((piece_index, begin), None)
@@ -416,7 +420,7 @@ class PeerConnection:
         try:
             await self._write_packet(handshake)
             response = await self._read_exactly(68)
-        except Exception:
+        except (ConnectionError, asyncio.TimeoutError, ValueError):
             await self.disconnect()
             return False
 
@@ -428,7 +432,7 @@ class PeerConnection:
                 await self.disconnect()
                 return False
             return True
-        except Exception:
+        except (ValueError, ConnectionError):
             await self.disconnect()
             return False
 
@@ -446,7 +450,7 @@ class PeerConnection:
         try:
             await self._write_packet(packet)
             return True
-        except Exception:
+        except (ConnectionError, asyncio.TimeoutError, ValueError):
             return False
                 
     async def send_interested(self) -> bool:
@@ -513,7 +517,7 @@ class PeerConnection:
                 results = await asyncio.gather(*requests)
                 return all(results)
             return True
-        except Exception:
+        except (ConnectionError, asyncio.TimeoutError, ValueError):
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop(piece_index, None)
             return False
@@ -558,7 +562,7 @@ class PeerConnection:
                     length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
                     try:
                         await self.send_cancel_request(piece_index, begin, length)
-                    except Exception:
+                    except (ConnectionError, asyncio.TimeoutError, ValueError):
                         pass
 
     async def update_interest(self) -> bool:

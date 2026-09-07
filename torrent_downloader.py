@@ -11,7 +11,7 @@ from hashlib import sha1
 from peers.peer_connection import PeerConnection
 import peers.peer_protocol_encoder as protocol_encoder
 
-class PieceManager:
+class TorrentDownloader:
 
     PRINT_CONNECTION_AMOUNT = True
     PRINT_PEER_PIECE_REQUESTS = False
@@ -24,14 +24,13 @@ class PieceManager:
     MAX_IN_FLIGHT_PIECES = 50
     MAX_IN_FLIGHT_PIECES_PER_PEER = 10
 
-    def __init__( self, peer_id: bytes, peers_info: list[tuple[str, int]], torrent_metadata: TorrentFile, download_path: str) -> None:
+    def __init__( self, peers_manager: PeersManager, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage) -> None:
         self._torrent_metadata = torrent_metadata
-        self._peer_id = peer_id
         self._total_piece_count = len(torrent_metadata.pieces)
 
-        self._torrent_storage = TorrentStorage(torrent_metadata, download_path)
+        self._torrent_storage = torrent_storage
 
-        self._peers_manager = PeersManager(peers_info, torrent_metadata, peer_id, self._torrent_storage)
+        self._peers_manager = peers_manager
 
         self._requested_pieces: list[int] = []
 
@@ -44,10 +43,10 @@ class PieceManager:
         self._validation_task: Optional[asyncio.Task] = None
         self._download_tasks: list[asyncio.Task] = []
 
-        if PieceManager.PRINT_CONNECTION_AMOUNT:
+        if TorrentDownloader.PRINT_CONNECTION_AMOUNT:
             self._print_connected_peers_task: Optional[asyncio.Task] = None
         
-        if PieceManager.PRINT_DOWNLOAD_SPEED:
+        if TorrentDownloader.PRINT_DOWNLOAD_SPEED:
             self._download_speed_task: Optional[asyncio.Task] = None
             self._last_downloaded_piece_amount: int = 0
             self._last_download_time: float = time.monotonic()
@@ -65,10 +64,10 @@ class PieceManager:
         self._is_downloading = True
         self._validation_task = asyncio.create_task(self._validate_pieces())
 
-        if PieceManager.PRINT_CONNECTION_AMOUNT:
+        if TorrentDownloader.PRINT_CONNECTION_AMOUNT:
             self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
 
-        if PieceManager.PRINT_DOWNLOAD_SPEED:
+        if TorrentDownloader.PRINT_DOWNLOAD_SPEED:
             self._download_speed_task = asyncio.create_task(self._print_download_speed())                
 
 
@@ -88,6 +87,8 @@ class PieceManager:
                     else:
                         await self.stop_downloads()
                         return
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 if self._is_downloading:
                     print(f"Download loop error: {e}")
@@ -132,7 +133,7 @@ class PieceManager:
                 return
             self._is_downloading = False
 
-        if PieceManager.PRINT_CONNECTION_AMOUNT and self._print_connected_peers_task is not None:
+        if TorrentDownloader.PRINT_CONNECTION_AMOUNT and self._print_connected_peers_task is not None:
             self._print_connected_peers_task.cancel()
             try:
                 await self._print_connected_peers_task
@@ -140,7 +141,7 @@ class PieceManager:
                 pass
             self._print_connected_peers_task = None
 
-        if PieceManager.PRINT_DOWNLOAD_SPEED and self._download_speed_task is not None:
+        if TorrentDownloader.PRINT_DOWNLOAD_SPEED and self._download_speed_task is not None:
             self._download_speed_task.cancel()
             try:
                 await self._download_speed_task
@@ -174,10 +175,7 @@ class PieceManager:
         announcement_tasks = []
         for connected_peer in peers_snapshot:
             if await connected_peer.is_connected():
-                try:
-                    announcement_tasks.append(connected_peer.send_not_interested())
-                except Exception:
-                    pass
+                announcement_tasks.append(connected_peer.send_not_interested())
         if announcement_tasks:
             async with asyncio.TaskGroup() as tg:
                 for task in announcement_tasks:
@@ -233,7 +231,7 @@ class PieceManager:
                     self._requested_pieces.remove(piece_index)
             return False
             
-        if PieceManager.PRINT_PEER_PIECE_REQUESTS:
+        if TorrentDownloader.PRINT_PEER_PIECE_REQUESTS:
             print(f"Piece {piece_index} requested from peer {peer._host}:{peer._port}")
 
         piece = peer.get_piece(piece_index)
