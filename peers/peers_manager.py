@@ -7,16 +7,16 @@ import asyncio
 
 class PeersManager:
     
-    LISTEN_PORT: int = 6881
     RECONNECT_INTERVAL: float = 15.0
     
-    def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: TorrentFile, peer_id: bytes, torrent_storage: TorrentStorage) -> None:
+    def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: TorrentFile, peer_id: bytes, listen_port: int, torrent_storage: TorrentStorage) -> None:
         self._peers: List[PeerConnection] = []
         self._peers_lock: asyncio.Lock = asyncio.Lock() 
         self._peers_info = peers_info
         self._torrent_metadata = torrent_metadata
         self._peer_id = peer_id
         self._torrent_storage = torrent_storage
+        self._listen_port = listen_port
         
         for ip, port in peers_info:
             peer = PeerConnection.from_address(ip, port, torrent_metadata.info_hash, peer_id, torrent_storage)
@@ -34,11 +34,11 @@ class PeersManager:
     
     async def start_listening(self) -> bool:
         try:
-            self._server = await asyncio.start_server(self._handle_connection, "", PeersManager.LISTEN_PORT)
+            self._server = await asyncio.start_server(self._handle_connection, "", self._listen_port)
         except Exception:
-            print(f"Failed to start listening on port {PeersManager.LISTEN_PORT}")
+            print(f"Failed to start listening on port {self._listen_port}")
             return False
-        print(f"Listening on port {PeersManager.LISTEN_PORT}")
+        print(f"Listening on port {self._listen_port}")
         return True
 
     async def stop_listening(self) -> bool:
