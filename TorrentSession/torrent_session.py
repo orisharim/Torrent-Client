@@ -1,17 +1,19 @@
-from peers.peers_manager import PeersManager
+from TorrentSession.tracker_client import TrackerClient
+from TorrentSession.peers.peers import Peers
 import random
 import time
 from typing import Optional
-from piece import Piece
-from torrent_storage import TorrentStorage
-from torrent_file import TorrentFile
+from TorrentSession.piece import Piece
+from TorrentSession.torrent_storage import TorrentStorage
+from Torrent.torrent_file import TorrentFile
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
-from peers.peer_connection import PeerConnection
-import peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.peers.peer_connection import PeerConnection
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from torrent_settings import TorrentSettings
 
-class TorrentDownloader:
+class TorrentSession:
 
     PRINT_CONNECTION_AMOUNT = True
     PRINT_PEER_PIECE_REQUESTS = False
@@ -24,14 +26,27 @@ class TorrentDownloader:
     MAX_IN_FLIGHT_PIECES = 50
     MAX_IN_FLIGHT_PIECES_PER_PEER = 10
 
-    def __init__( self, peers_manager: PeersManager, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage) -> None:
+    def __init__(self, peer_id: bytes, listening_port: int, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings) -> None:
         self._torrent_metadata = torrent_metadata
         self._total_piece_count = len(torrent_metadata.pieces)
 
         self._torrent_storage = torrent_storage
+        self._listening_port = listening_port
+        self._peer_id = peer_id
+        self._torrent_settings = torrent_settings
 
-        self._peers_manager = peers_manager
+        self._peers = Peers(peer_id, torrent_metadata, torrent_storage)
+        tracker_urls = []
+        if torrent_metadata.announce is not None:
+            tracker_urls.append(torrent_metadata.announce.decode("utf-8"))
+        for tier in torrent_metadata.announce_list:
+            for tracker_url in tier:
+                if tracker_url not in tracker_urls:
+                    tracker_urls.append(tracker_url)
 
+        self._tracker_urls = tracker_urls
+        self._trackers: list[TrackerClient] = []
+         
         self._requested_pieces: list[int] = []
 
         self._is_downloading = False
@@ -43,31 +58,39 @@ class TorrentDownloader:
         self._validation_task: Optional[asyncio.Task] = None
         self._download_tasks: list[asyncio.Task] = []
 
-        if TorrentDownloader.PRINT_CONNECTION_AMOUNT:
+        if TorrentSession.PRINT_CONNECTION_AMOUNT:
             self._print_connected_peers_task: Optional[asyncio.Task] = None
         
-        if TorrentDownloader.PRINT_DOWNLOAD_SPEED:
+        if TorrentSession.PRINT_DOWNLOAD_SPEED:
             self._download_speed_task: Optional[asyncio.Task] = None
             self._last_downloaded_piece_amount: int = 0
             self._last_download_time: float = time.monotonic()
 
     async def close_all(self) -> None:
         await self.stop_downloads()
-        await self._peers_manager.close_connections()
+        await self.stop_seeding()
+        await asyncio.gather(*(tracker.stop_contacting() for tracker in self._trackers))
+        await self._peers.close_connections()
               
-
     async def start_downloads(self):
         """starts downloading pieces from peers if already downloading it will restart the download process."""
         await self.stop_downloads()
         await self._torrent_storage.restore_pieces_from_disk()
-        await self._peers_manager.connect_to_peers()
+        await self._start_trackers()
+        await self._peers.connect_to_peers()
         self._is_downloading = True
         self._validation_task = asyncio.create_task(self._validate_pieces())
 
-        if TorrentDownloader.PRINT_CONNECTION_AMOUNT:
+
+        
+
+        
+            
+
+        if TorrentSession.PRINT_CONNECTION_AMOUNT:
             self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
 
-        if TorrentDownloader.PRINT_DOWNLOAD_SPEED:
+        if TorrentSession.PRINT_DOWNLOAD_SPEED:
             self._download_speed_task = asyncio.create_task(self._print_download_speed())                
 
 
@@ -97,17 +120,40 @@ class TorrentDownloader:
         for _ in range(self.MAX_IN_FLIGHT_PIECES):
             self._download_tasks.append(asyncio.create_task(download_loop()))
 
+    async def _start_trackers(self) -> None:
+        target = self._torrent_settings.tracker_amount
+        active_target = len(self._tracker_urls) if target == 0 else target
+
+        for tracker_url in self._tracker_urls:
+            if len(self._trackers) >= active_target:
+                break
+
+            tracker = TrackerClient(
+                self._peers,
+                tracker_url,
+                self._torrent_metadata.info_hash,
+                self._peer_id,
+                self._listening_port,
+                self._torrent_storage,
+            )
+            try:
+                if await tracker.contact():
+                    self._trackers.append(tracker)
+            except Exception as exc:
+                print(f"Failed to start tracker {tracker_url}: {exc}")
+
+
     async def _validate_pieces(self):
         """Validates downloaded pieces and removes them if they are not valid"""
-        while self._is_downloading:
+        while True:
+            if self._is_downloading:
+                await self._torrent_storage.delete_broken_pieces()
             await asyncio.sleep(self.VALIDATION_INTERVAL)
-            await self._torrent_storage.delete_broken_pieces()
-
-
+            
     async def _print_connected_peers(self):
         while self._is_downloading:
             await asyncio.sleep(5.0)
-            peers = await self._peers_manager.get_peers()
+            peers = await self._peers.get_peers()
             connected = 0
             for peer in peers:
                 if await peer.is_connected():
@@ -133,64 +179,63 @@ class TorrentDownloader:
                 return
             self._is_downloading = False
 
-        if TorrentDownloader.PRINT_CONNECTION_AMOUNT and self._print_connected_peers_task is not None:
-            self._print_connected_peers_task.cancel()
-            try:
-                await self._print_connected_peers_task
-            except asyncio.CancelledError:
-                pass
-            self._print_connected_peers_task = None
+            if TorrentSession.PRINT_CONNECTION_AMOUNT and self._print_connected_peers_task is not None:
+                self._print_connected_peers_task.cancel()
+                try:
+                    await self._print_connected_peers_task
+                except asyncio.CancelledError:
+                    pass
+                self._print_connected_peers_task = None
 
-        if TorrentDownloader.PRINT_DOWNLOAD_SPEED and self._download_speed_task is not None:
-            self._download_speed_task.cancel()
-            try:
-                await self._download_speed_task
-            except asyncio.CancelledError:
-                pass
-            self._download_speed_task = None
+            if TorrentSession.PRINT_DOWNLOAD_SPEED and self._download_speed_task is not None:
+                self._download_speed_task.cancel()
+                try:
+                    await self._download_speed_task
+                except asyncio.CancelledError:
+                    pass
+                self._download_speed_task = None
 
-        # cancel the validation task
-        if self._validation_task is not None:
-            self._validation_task.cancel()
-            try:
-                await self._validation_task
-            except asyncio.CancelledError:
-                pass
+            if self._validation_task is not None:
+                self._validation_task.cancel()
+                try:
+                    await self._validation_task
+                except asyncio.CancelledError:
+                    pass
 
-        self._validation_task = None
+            self._validation_task = None
 
-        # cancel the download tasks
-        current_task = asyncio.current_task()
-        for task in self._download_tasks:
-            if task is not current_task:
-                task.cancel()
-        tasks_to_await = [t for t in self._download_tasks if t is not current_task]
-        if tasks_to_await:
-            await asyncio.gather(*tasks_to_await, return_exceptions=True)
-        self._download_tasks = []
+            # cancel the download tasks
+            current_task = asyncio.current_task()
+            for task in self._download_tasks:
+                if task is not current_task:
+                    task.cancel()
+            tasks_to_await = [t for t in self._download_tasks if t is not current_task]
+            if tasks_to_await:
+                await asyncio.gather(*tasks_to_await, return_exceptions=True)
+            self._download_tasks = []
 
-        # send not interested to the peers
-        peers_snapshot = await self._peers_manager.get_peers()
+            # send not interested to the peers
+            peers_snapshot = await self._peers.get_peers()
 
-        announcement_tasks = []
-        for connected_peer in peers_snapshot:
-            if await connected_peer.is_connected():
-                announcement_tasks.append(connected_peer.send_not_interested())
-        if announcement_tasks:
-            async with asyncio.TaskGroup() as tg:
-                for task in announcement_tasks:
-                    tg.create_task(task)
+            announcement_tasks = []
+            for connected_peer in peers_snapshot:
+                if await connected_peer.is_connected():
+                    announcement_tasks.append(connected_peer.send_not_interested())
+            if announcement_tasks:
+                async with asyncio.TaskGroup() as tg:
+                    for task in announcement_tasks:
+                        tg.create_task(task)
 
-        async with self._requested_pieces_lock:
-            self._requested_pieces.clear()
+            async with self._requested_pieces_lock:
+                self._requested_pieces.clear()
         
     async def stop_seeding(self):
-        await self._peers_manager.stop_seeding()
+        await self._peers.stop_seeding()
         self._is_seeding = False
     
     async def start_seeding(self):
         self._is_seeding = True
-        await self._peers_manager.start_seeding()
+        await self._peers.start_seeding()
 
     def is_seeding(self) -> bool:
         return self._is_seeding
@@ -199,7 +244,7 @@ class TorrentDownloader:
         return self._is_downloading
     
     async def is_complete(self) -> bool:
-        return self.get_downloaded_piece_count() == self._total_piece_count and self._torrent_storage.is_complete()
+        return self._torrent_storage.is_complete()
     
     def get_downloaded_piece_count(self) -> int:
         count = 0
@@ -231,7 +276,7 @@ class TorrentDownloader:
                     self._requested_pieces.remove(piece_index)
             return False
             
-        if TorrentDownloader.PRINT_PEER_PIECE_REQUESTS:
+        if TorrentSession.PRINT_PEER_PIECE_REQUESTS:
             print(f"Piece {piece_index} requested from peer {peer._host}:{peer._port}")
 
         piece = peer.get_piece(piece_index)
@@ -257,12 +302,11 @@ class TorrentDownloader:
                 if piece_index in self._requested_pieces:
                     self._requested_pieces.remove(piece_index)
             return False
-
         
     async def _select_next_piece(self) -> Optional[int]:
         # get the rarest piece 
         piece_occs = [0] * self._total_piece_count
-        peers_snapshot = await self._peers_manager.get_peers()
+        peers_snapshot = await self._peers.get_peers()
 
         requested_pieces_snapshot = set(self._requested_pieces)
 
@@ -289,7 +333,7 @@ class TorrentDownloader:
         return rarest_piece_idx
 
     async def _select_peer_for_piece(self, piece_index: int) -> Optional[PeerConnection]:
-        peers_snapshot = await self._peers_manager.get_peers()
+        peers_snapshot = await self._peers.get_peers()
 
         peers_with_piece = []
         for peer in peers_snapshot:

@@ -1,10 +1,10 @@
 import asyncio
 from typing import Optional, Tuple
 import time
-from peers.peer_state import PeerState
-import peers.peer_protocol_encoder as protocol_encoder
-from piece import Piece
-from torrent_storage import TorrentStorage
+from TorrentSession.peers.peer_state import PeerState
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.piece import Piece
+from TorrentSession.torrent_storage import TorrentStorage
 
 class PeerConnection:
     PRINT_INCOMING_MESSAGES = False

@@ -1,58 +1,32 @@
 from typing_extensions import Optional
-from torrent_storage import TorrentStorage
-from peers.peer_connection import PeerConnection
+from TorrentSession.torrent_storage import TorrentStorage
+from TorrentSession.peers.peer_connection import PeerConnection
 from typing import List, Tuple
-from torrent_file import TorrentFile
+from Torrent.torrent_file import TorrentFile
 import asyncio
 
-class PeersManager:
+class Peers:
     
     RECONNECT_INTERVAL: float = 15.0
     
-    def __init__(self, peers_info: List[Tuple[str, int]], torrent_metadata: TorrentFile, peer_id: bytes, listen_port: int, torrent_storage: TorrentStorage) -> None:
+    def __init__(self, peer_id: bytes, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage) -> None:
         self._peers: List[PeerConnection] = []
         self._peers_lock: asyncio.Lock = asyncio.Lock() 
-        self._peers_info = peers_info
-        self._torrent_metadata = torrent_metadata
-        self._peer_id = peer_id
-        self._torrent_storage = torrent_storage
-        self._listen_port = listen_port
-        
-        for ip, port in peers_info:
-            peer = PeerConnection.from_address(ip, port, torrent_metadata.info_hash, peer_id, torrent_storage)
-            self._peers.append(peer)
+        self._peers_info: list[tuple[str, int]] = []
 
-        self._server: Optional[asyncio.Server] = None
+        self._torrent_metadata = torrent_metadata
+        self._torrent_storage = torrent_storage
+        self._peer_id = peer_id
+        
         self._reconnect_task: Optional[asyncio.Task] = None
 
-
-    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
-        if await self._connect_to_peer(peer):
-            async with self._peers_lock:
-                self._peers.append(peer)
-    
-    async def start_listening(self) -> bool:
-        try:
-            self._server = await asyncio.start_server(self._handle_connection, "", self._listen_port)
-        except Exception:
-            print(f"Failed to start listening on port {self._listen_port}")
-            return False
-        print(f"Listening on port {self._listen_port}")
-        return True
-
-    async def stop_listening(self) -> bool:
-        self._server.close()
-        try:
-            await self._server.wait_closed()
-        except asyncio.CancelledError:
-            pass
-    
     async def _reconnect(self):
         while True:
             await asyncio.sleep(self.RECONNECT_INTERVAL)
             try:
-                await self.connect_to_peers()
+                async with self._peers_lock:
+                    for peer in self._peers:
+                        await self._connect_to_peer(peer)
             except Exception:
                 pass
 
@@ -65,8 +39,13 @@ class PeersManager:
             for ip, port in peers_info:
                 peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
                 self._peers.append(peer)
+                asyncio.create_task(self._connect_to_peer(peer))
 
-    async def update_peers(self, peers_info: list[tuple[str, int]]):
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    async def add_peers(self, peers_info: list[tuple[str, int]]):
         """Adds only tje new peers to the list of peers"""
         async with self._peers_lock:
             for ip, port in peers_info:
@@ -74,36 +53,42 @@ class PeersManager:
                     peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
                     self._peers_info.append((ip, port))
                     self._peers.append(peer)
+                    asyncio.create_task(self._connect_to_peer(peer))
+                    
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
+                    
+    async def add_peers_by_connections(self, peers: list[(asyncio.StreamReader, asyncio.StreamWriter)]):
+        """Adds only the new peers to the list of peers"""
+        async with self._peers_lock:
+            for reader, writer in peers:
+                peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
+                if (peer._host, peer._port) not in self._peers_info:
+                    self._peers_info.append((peer._host, peer._port))
+                    self._peers.append(peer)
+                    asyncio.create_task(self._connect_to_peer(peer))
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
 
     async def get_peers(self) -> List[PeerConnection] | None:
         async with self._peers_lock:
             return list(self._peers)
         return None
 
-    async def connect_to_peers(self) -> None:
-        async with self._peers_lock:
-            peers_snapshot = list(self._peers)
-        
-        for peer in peers_snapshot:
-            if not await peer.is_connected():
-                asyncio.create_task(self._connect_to_peer(peer))
 
-        if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = asyncio.create_task(self._reconnect())
-
-        await self.start_listening()
-    
     async def _connect_to_peer(self, peer: PeerConnection) -> bool:
         try:
-            success = await peer.connect()
-            if not success:
-                print(f"Failed to connect to peer {peer._host}:{peer._port}")
-                return False
+            if not await peer.is_connected():
+                if not await peer.connect():
+                    print(f"Failed to connect to peer {peer._host}:{peer._port}")
+                    return False
 
-            success_loop = await peer.start_message_loop()
-            if not success_loop:
-                print(f"Failed to start message loop for peer {peer._host}:{peer._port}")
-                return False
+            if not await peer.is_message_loop_running():
+                if not await peer.start_message_loop():
+                    print(f"Failed to start message loop for peer {peer._host}:{peer._port}")
+                    return False
 
             return True
         except Exception as e:

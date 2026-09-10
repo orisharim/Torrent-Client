@@ -1,5 +1,5 @@
 from typing import Optional
-import peers.peer_protocol_encoder as protocol_encoder
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 
 class PeerState:
     def __init__(self) -> None:

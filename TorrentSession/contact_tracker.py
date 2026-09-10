@@ -14,68 +14,6 @@ COMPLETED = ("completed", 1)
 STARTED = ("started", 2)
 STOPPED = ("stopped", 3)
 
-def _parse_compact_peers(peer_bytes: bytes) -> List[Tuple[str, int]]:
-    #Parse IPv4 compact peer binary data (6 bytes per peer)
-    peers = []
-    for i in range(0, len(peer_bytes), 6):
-        if i + 6 > len(peer_bytes):
-            break
-        ip_bytes = peer_bytes[i:i+4]
-        port_bytes = peer_bytes[i+4:i+6]
-        ip = socket.inet_ntoa(ip_bytes)
-        port = struct.unpack(">H", port_bytes)[0]
-        peers.append((ip, port))
-    return peers
-
-
-def _parse_compact_peers6(peer_bytes: bytes) -> List[Tuple[str, int]]:
-    #Parse IPv6 compact peer binary data (18 bytes per peer)
-    peers = []
-    for i in range(0, len(peer_bytes), 18):
-        if i + 18 > len(peer_bytes):
-            break
-        ip_bytes = peer_bytes[i:i+16]
-        port_bytes = peer_bytes[i+16:i+18]
-        ip = socket.inet_ntop(socket.AF_INET6, ip_bytes)
-        port = struct.unpack(">H", port_bytes)[0]
-        peers.append((ip, port))
-    return peers
-
-
-def _extract_interval(tracker_res: dict) -> Optional[int]:
-    #Extract interval integer from HTTP or UDP tracker response dictionary
-    if not tracker_res or not isinstance(tracker_res, dict):
-        return None
-    interval = tracker_res.get(b'interval') or tracker_res.get('interval')
-    return int(interval) if interval is not None else None
-
-
-def _extract_peers_from_dict(tracker_res: dict) -> List[Tuple[str, int]]:
-    #Extract list of (ip, port) tuples from HTTP/UDP tracker response dictionary
-    if not tracker_res or not isinstance(tracker_res, dict):
-        return []
-
-    peers = []
-
-    # Handle 'peers' key (dict list or compact bytes)
-    peers_data = tracker_res.get(b'peers') or tracker_res.get('peers')
-    if isinstance(peers_data, list):
-        for p in peers_data:
-            if isinstance(p, dict):
-                ip = p.get(b'ip') or p.get('ip')
-                port = p.get(b'port') or p.get('port')
-                if ip and port:
-                    ip_str = ip.decode('utf-8', errors='ignore') if isinstance(ip, bytes) else str(ip)
-                    peers.append((ip_str, int(port)))
-    elif isinstance(peers_data, bytes):
-        peers.extend(_parse_compact_peers(peers_data))
-
-    # Handle 'peers6' key (IPv6 compact bytes)
-    peers6_data = tracker_res.get(b'peers6') or tracker_res.get('peers6')
-    if isinstance(peers6_data, bytes):
-        peers.extend(_parse_compact_peers6(peers6_data))
-
-    return peers
 
 
 def parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tuple[str, int]]]:
@@ -87,43 +25,7 @@ def parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tuple
     peers = _extract_peers_from_dict(tracker_res)
     return interval, peers
 
-
-async def get_peers(
-    tracker_url: str,
-    info_hash: bytes,
-    peer_id: bytes,
-    listening_port: int = 6881,
-    event: Tuple[str, int] = KEEP_ALIVE,
-    downloaded: int = 0,
-    uploaded: int = 0,
-    left: int = 0
-) -> Tuple[Optional[int], List[Tuple[str, int]]]:
-    #contacts trackers and returns a tuple of (interval of when to contact next, list_of_peers)
-    res = await contact_tracker(
-        tracker_url=tracker_url,
-        info_hash=info_hash,
-        peer_id=peer_id,
-        listening_port=listening_port,
-        event=event,
-        downloaded=downloaded,
-        uploaded=uploaded,
-        left=left
-    )
-    if res:
-        return parse_tracker_response(res)
-    return None, []
-
-
-async def contact_tracker(
-    tracker_url: str,
-    info_hash: bytes,
-    peer_id: bytes,
-    listening_port: int,
-    event: Tuple[str, int] = KEEP_ALIVE,
-    downloaded: int = 0,
-    uploaded: int = 0,
-    left: int = 0
-) -> Optional[Dict[str, Any]]:
+async def contact_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, listening_port: int, event: Tuple[str, int] = KEEP_ALIVE, downloaded: int = 0, uploaded: int = 0, left: int = 0) -> Optional[Dict[str, Any]]:
 
     event_str = event[0] if event else ""
     event_num = event[1] if event else 0
@@ -158,17 +60,7 @@ async def contact_tracker(
         print(f"Failed to contact {tracker_url}: {e}")
         return None
 
-
-def _contact_http_tracker(
-    tracker_url: str,
-    info_hash: bytes,
-    peer_id: bytes,
-    listening_port: int,
-    left: int,
-    downloaded: int = 0,
-    uploaded: int = 0,
-    event: str = ""
-) -> Dict[bytes, Any]:
+def _contact_http_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, listening_port: int, left: int, downloaded: int = 0, uploaded: int = 0, event: str = "") -> Dict[bytes, Any]:
     params = {
         "info_hash": urllib.parse.quote_from_bytes(info_hash),
         "peer_id": urllib.parse.quote_from_bytes(peer_id),
@@ -191,17 +83,7 @@ def _contact_http_tracker(
         data, _, _ = decode_bencode(raw_data)
         return data
 
-
-def _contact_udp_tracker(
-    tracker_url: str,
-    info_hash: bytes,
-    peer_id: bytes,
-    listening_port: int,
-    left: int,
-    downloaded: int = 0,
-    uploaded: int = 0,
-    event: int = 0
-) -> Dict[str, Any]:
+def _contact_udp_tracker(tracker_url: str,  info_hash: bytes,  peer_id: bytes,  listening_port: int,  left: int,  downloaded: int = 0,  uploaded: int = 0,  event: int = 0) -> Dict[str, Any]:
 
     parsed_url = urllib.parse.urlparse(tracker_url)
 
@@ -275,3 +157,67 @@ def _contact_udp_tracker(
         }
     finally:
         sock.close()
+
+
+def _parse_compact_peers(peer_bytes: bytes) -> List[Tuple[str, int]]:
+    #Parse IPv4 compact peer binary data (6 bytes per peer)
+    peers = []
+    for i in range(0, len(peer_bytes), 6):
+        if i + 6 > len(peer_bytes):
+            break
+        ip_bytes = peer_bytes[i:i+4]
+        port_bytes = peer_bytes[i+4:i+6]
+        ip = socket.inet_ntoa(ip_bytes)
+        port = struct.unpack(">H", port_bytes)[0]
+        peers.append((ip, port))
+    return peers
+
+
+def _parse_compact_peers6(peer_bytes: bytes) -> List[Tuple[str, int]]:
+    #Parse IPv6 compact peer binary data (18 bytes per peer)
+    peers = []
+    for i in range(0, len(peer_bytes), 18):
+        if i + 18 > len(peer_bytes):
+            break
+        ip_bytes = peer_bytes[i:i+16]
+        port_bytes = peer_bytes[i+16:i+18]
+        ip = socket.inet_ntop(socket.AF_INET6, ip_bytes)
+        port = struct.unpack(">H", port_bytes)[0]
+        peers.append((ip, port))
+    return peers
+
+
+def _extract_interval(tracker_res: dict) -> Optional[int]:
+    #Extract interval integer from HTTP or UDP tracker response dictionary
+    if not tracker_res or not isinstance(tracker_res, dict):
+        return None
+    interval = tracker_res.get(b'interval') or tracker_res.get('interval')
+    return int(interval) if interval is not None else None
+
+
+def _extract_peers_from_dict(tracker_res: dict) -> List[Tuple[str, int]]:
+    #Extract list of (ip, port) tuples from HTTP/UDP tracker response dictionary
+    if not tracker_res or not isinstance(tracker_res, dict):
+        return []
+
+    peers = []
+
+    # Handle 'peers' key (dict list or compact bytes)
+    peers_data = tracker_res.get(b'peers') or tracker_res.get('peers')
+    if isinstance(peers_data, list):
+        for p in peers_data:
+            if isinstance(p, dict):
+                ip = p.get(b'ip') or p.get('ip')
+                port = p.get(b'port') or p.get('port')
+                if ip and port:
+                    ip_str = ip.decode('utf-8', errors='ignore') if isinstance(ip, bytes) else str(ip)
+                    peers.append((ip_str, int(port)))
+    elif isinstance(peers_data, bytes):
+        peers.extend(_parse_compact_peers(peers_data))
+
+    # Handle 'peers6' key (IPv6 compact bytes)
+    peers6_data = tracker_res.get(b'peers6') or tracker_res.get('peers6')
+    if isinstance(peers6_data, bytes):
+        peers.extend(_parse_compact_peers6(peers6_data))
+
+    return peers
