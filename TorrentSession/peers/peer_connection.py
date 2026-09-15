@@ -80,6 +80,10 @@ class PeerConnection:
         peer._last_message_send_time = time.monotonic()
         return peer
 
+    async def accept_handshake(self, remote_peer_id: bytes) -> None:
+        self._state.set_remote_peer_id(remote_peer_id)
+        self._handshake_done = True
+
     async def connect(self) -> bool:
         async with self._connect_lock:
             if self._closing:
@@ -228,8 +232,9 @@ class PeerConnection:
         except Exception as exc:
             if not self._closing:
                 await self.disconnect()
-            pass
-            raise RuntimeError("Peer connection message loop terminated unexpectedly") from exc
+            print(
+                f"Peer message loop failed for {self._host}:{self._port}: {exc}"
+            )
 
     async def _read_message(self) -> None:
         length_prefix = await self._read_exactly(4, timeout=self.CLOSE_CONNECTION_TIMEOUT)
@@ -295,8 +300,6 @@ class PeerConnection:
                 return
             upload_task = asyncio.create_task(self._send_piece(piece_index, begin, length))
             self._upload_tasks[request_key] = (upload_task, time.monotonic())
-            if PeerConnection.PRINT_UPLOADED_PIECES:
-                print(f"Uploaded piece {piece_index} to {self._host}:{self._port}")
 
     async def _send_piece(self, piece_index: int, begin: int, length: int) -> None:
         if piece_index < 0 or piece_index >= self._storage._total_piece_count:
@@ -314,8 +317,11 @@ class PeerConnection:
             return
         payload = protocol_encoder.pack_piece_payload(piece_index, begin, data)
         try:
-            await self.send_message(self.MESSAGE_PIECE, payload)
+            if not await self.send_message(self.MESSAGE_PIECE, payload):
+                raise ConnectionError("peer rejected the piece message")
             await self._storage.record_uploaded_piece(piece_index, len(data))
+            if PeerConnection.PRINT_UPLOADED_PIECES:
+                print(f"Uploaded piece {piece_index} to {self._host}:{self._port}")
             
         except Exception as exc:
             raise ConnectionError(

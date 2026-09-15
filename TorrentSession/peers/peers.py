@@ -24,11 +24,11 @@ class Peers:
         while True:
             await asyncio.sleep(self.RECONNECT_INTERVAL)
             try:
-                async with self._peers_lock:
-                    for peer in self._peers:
-                        await self._connect_to_peer(peer)
-            except Exception:
-                pass
+                await self.connect_to_peers()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"Peer reconnect cycle failed: {exc}")
 
     async def set_peers(self, peers_info: list[tuple[str, int]]):
         """Closes all peer connections and sets the list of peers"""
@@ -39,11 +39,6 @@ class Peers:
             for ip, port in peers_info:
                 peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
                 self._peers.append(peer)
-                asyncio.create_task(self._connect_to_peer(peer))
-
-
-        if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = asyncio.create_task(self._reconnect())
 
     async def add_peers(self, peers_info: list[tuple[str, int]]):
         """Adds only tje new peers to the list of peers"""
@@ -53,11 +48,6 @@ class Peers:
                     peer = PeerConnection.from_address(ip, port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
                     self._peers_info.append((ip, port))
                     self._peers.append(peer)
-                    asyncio.create_task(self._connect_to_peer(peer))
-                    
-
-        if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = asyncio.create_task(self._reconnect())
                     
     async def add_peers_by_connections(self, peers: list[(asyncio.StreamReader, asyncio.StreamWriter)]):
         """Adds only the new peers to the list of peers"""
@@ -67,7 +57,26 @@ class Peers:
                 if (peer._host, peer._port) not in self._peers_info:
                     self._peers_info.append((peer._host, peer._port))
                     self._peers.append(peer)
-                    asyncio.create_task(self._connect_to_peer(peer))
+
+    async def add_incoming_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, remote_peer_id: bytes) -> bool:
+        peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage)
+        await peer.accept_handshake(remote_peer_id)
+        if not await peer.start_message_loop():
+            await peer.close()
+            return False
+
+        async with self._peers_lock:
+            if (peer._host, peer._port) not in self._peers_info:
+                self._peers_info.append((peer._host, peer._port))
+                self._peers.append(peer)
+        return True
+
+    async def connect_to_peers(self):
+        """Connects to all registered peers and starts periodic reconnection."""
+        async with self._peers_lock:
+            peers = list(self._peers)
+
+        await asyncio.gather(*(self._connect_to_peer(peer) for peer in peers))
 
         if self._reconnect_task is None or self._reconnect_task.done():
             self._reconnect_task = asyncio.create_task(self._reconnect())

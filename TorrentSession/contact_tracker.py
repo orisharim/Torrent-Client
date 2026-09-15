@@ -3,9 +3,10 @@ import struct
 import random
 import urllib.parse
 import urllib.request
+import urllib.error
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from bencode import decode_bencode
+from Torrent.bencode import decode_bencode
 
 CONTACT_TIMEOUT = 10
 # events: (str is for the http and the num is for the udp)
@@ -56,7 +57,7 @@ async def contact_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, l
                 event_str
             )
         raise ValueError(f"Unsupported tracker URL: {tracker_url}")
-    except Exception as e:
+    except (OSError, TimeoutError, ValueError, struct.error, urllib.error.URLError) as e:
         print(f"Failed to contact {tracker_url}: {e}")
         return None
 

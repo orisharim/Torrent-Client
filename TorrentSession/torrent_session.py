@@ -12,6 +12,7 @@ from hashlib import sha1
 from TorrentSession.peers.peer_connection import PeerConnection
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from torrent_settings import TorrentSettings
+from TorrentSession import piece_picker
 
 class TorrentSession:
 
@@ -28,7 +29,6 @@ class TorrentSession:
 
     def __init__(self, peer_id: bytes, listening_port: int, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings) -> None:
         self._torrent_metadata = torrent_metadata
-        self._total_piece_count = len(torrent_metadata.pieces)
 
         self._torrent_storage = torrent_storage
         self._listening_port = listening_port
@@ -69,7 +69,7 @@ class TorrentSession:
     async def close_all(self) -> None:
         await self.stop_downloads()
         await self.stop_seeding()
-        await asyncio.gather(*(tracker.stop_contacting() for tracker in self._trackers))
+        await self._stop_trackers()
         await self._peers.close_connections()
               
     async def start_downloads(self):
@@ -80,12 +80,6 @@ class TorrentSession:
         await self._peers.connect_to_peers()
         self._is_downloading = True
         self._validation_task = asyncio.create_task(self._validate_pieces())
-
-
-        
-
-        
-            
 
         if TorrentSession.PRINT_CONNECTION_AMOUNT:
             self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
@@ -115,6 +109,7 @@ class TorrentSession:
             except Exception as e:
                 if self._is_downloading:
                     print(f"Download loop error: {e}")
+                    await self.stop_downloads()
 
         self._download_tasks = []
         for _ in range(self.MAX_IN_FLIGHT_PIECES):
@@ -228,7 +223,12 @@ class TorrentSession:
 
             async with self._requested_pieces_lock:
                 self._requested_pieces.clear()
-        
+
+    async def _stop_trackers(self):
+        """Stops all trackers from contacting the tracker servers"""
+        await asyncio.gather(*(tracker.stop_contacting() for tracker in self._trackers))
+        self._trackers.clear()
+
     async def stop_seeding(self):
         await self._peers.stop_seeding()
         self._is_seeding = False
@@ -248,7 +248,7 @@ class TorrentSession:
     
     def get_downloaded_piece_count(self) -> int:
         count = 0
-        for i in range(self._total_piece_count):
+        for i in range(len(self._torrent_metadata.pieces)):
             if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), i):
                 count += 1
         return count
@@ -257,24 +257,19 @@ class TorrentSession:
         if not self._is_downloading or await self.is_complete():
             return False
 
-        async with self._requested_pieces_lock:
-            piece_index = await self._select_next_piece()
-            if piece_index is None:
-                return False 
-            self._requested_pieces.append(piece_index)
-
-        peer = await self._select_peer_for_piece(piece_index)
+        piece_index = await piece_picker.select_next_piece(self._torrent_storage.get_bitfield(), len(self._torrent_metadata.pieces), await self._peers.get_peers(), self._requested_pieces)
+        if piece_index is None:
+            return False 
+            
+        peer = await piece_picker.select_peer_for_piece(piece_index, await self._peers.get_peers())
         if peer is None:
-            async with self._requested_pieces_lock:
-                if piece_index in self._requested_pieces:
-                    self._requested_pieces.remove(piece_index)
             return False
 
         if not await peer.send_piece_request(piece_index):
-            async with self._requested_pieces_lock:
-                if piece_index in self._requested_pieces:
-                    self._requested_pieces.remove(piece_index)
             return False
+
+        async with self._requested_pieces_lock:
+            self._requested_pieces.append(piece_index)
             
         if TorrentSession.PRINT_PEER_PIECE_REQUESTS:
             print(f"Piece {piece_index} requested from peer {peer._host}:{peer._port}")
@@ -283,13 +278,12 @@ class TorrentSession:
         if piece is not None:
             try:
                 await asyncio.wait_for(piece.wait_until_complete(), timeout=self.PIECE_DOWNLOAD_TIMEOUT)
-                
                 await self._torrent_storage.set_piece_in_bitfield(piece_index)
-            
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:
                         self._requested_pieces.remove(piece_index)
                 return True
+
             except asyncio.TimeoutError:
                 print(f"Piece {piece_index} download timeout")
                 await peer.cancel_piece(piece_index)
@@ -297,63 +291,14 @@ class TorrentSession:
                     if piece_index in self._requested_pieces:
                         self._requested_pieces.remove(piece_index)
                 return False
+            
         else:
             async with self._requested_pieces_lock:
                 if piece_index in self._requested_pieces:
                     self._requested_pieces.remove(piece_index)
             return False
         
-    async def _select_next_piece(self) -> Optional[int]:
-        # get the rarest piece 
-        piece_occs = [0] * self._total_piece_count
-        peers_snapshot = await self._peers.get_peers()
-
-        requested_pieces_snapshot = set(self._requested_pieces)
-
-        for peer in peers_snapshot:
-            if not await peer.is_connected():
-                continue
-
-            peer_bitfield = await peer.get_bitfield()
-            if peer_bitfield is None or len(peer_bitfield) == 0 or len(peer_bitfield) < (self._total_piece_count + 7) // 8:
-                continue
-
-            for piece_index in range(self._total_piece_count):  
-                if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index) or piece_index in requested_pieces_snapshot:
-                    continue  
-                piece_occs[piece_index] += 1
-
-        rarest_piece_idx = None
-        min_occs = float('inf')
-        for piece_index in range(self._total_piece_count):  
-            if piece_occs[piece_index] > 0 and piece_occs[piece_index] < min_occs:
-                min_occs = piece_occs[piece_index]
-                rarest_piece_idx = piece_index
-
-        return rarest_piece_idx
-
-    async def _select_peer_for_piece(self, piece_index: int) -> Optional[PeerConnection]:
-        peers_snapshot = await self._peers.get_peers()
-
-        peers_with_piece = []
-        for peer in peers_snapshot:
-            if peer.can_download_piece(piece_index):
-                peers_with_piece.append(peer)
-
-        if not peers_with_piece:
-            return None
-
-        min_amount = len(peers_with_piece[0].get_requested_pieces())
-        for p in peers_with_piece:
-            if len(p.get_requested_pieces()) < min_amount:
-                min_amount = len(p.get_requested_pieces())
-
-        best_peers = []
-        for p in peers_with_piece:
-            if len(p.get_requested_pieces()) == min_amount:
-                best_peers.append(p)
-
-        return random.choice(best_peers)
+    
             
     def is_piece_downloaded(self, piece_index: int) -> bool:
         return protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index)

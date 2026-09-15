@@ -54,25 +54,32 @@ class TrackerClient:
     async def _recontact(self, interval: float):
         while True:
             await asyncio.sleep(interval)
-            downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
-            resp = await contact_tracker(
-                tracker_url=self._tracker_url,
-                info_hash=self._info_hash,
-                peer_id=self._peer_id,
-                listening_port=self._listening_port,
-                event=tracker_protocol.KEEP_ALIVE,
-                downloaded=sum(self._torrent_storage.get_piece_length(index) for index in downloaded_pieces),
-                uploaded=await self._torrent_storage.get_uploaded_bytes(),
-                left=self._torrent_storage._torrent_metadata.length - sum(
-                    self._torrent_storage.get_piece_length(index) for index in downloaded_pieces
-                ),
-            )
+            try:
+                downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
+                downloaded_bytes = sum(
+                    self._torrent_storage.get_piece_length(index)
+                    for index in downloaded_pieces
+                )
+                resp = await contact_tracker(
+                    tracker_url=self._tracker_url,
+                    info_hash=self._info_hash,
+                    peer_id=self._peer_id,
+                    listening_port=self._listening_port,
+                    event=tracker_protocol.KEEP_ALIVE,
+                    downloaded=downloaded_bytes,
+                    uploaded=await self._torrent_storage.get_uploaded_bytes(),
+                    left=self._torrent_storage._torrent_metadata.length - downloaded_bytes,
+                )
 
-            interval, peers = parse_tracker_response(resp)
-            if peers:
-                await self._peers.add_peers(peers)
-            if interval is not None:
-                interval = max(interval, 1)
+                next_interval, peers = parse_tracker_response(resp)
+                if peers:
+                    await self._peers.add_peers(peers)
+                if next_interval is not None:
+                    interval = max(next_interval, 1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"Failed to recontact tracker {self._tracker_url}: {exc}")
 
     async def stop_contacting(self):
         task = self._recontact_task
