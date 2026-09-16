@@ -91,73 +91,84 @@ def _contact_udp_tracker(tracker_url: str,  info_hash: bytes,  peer_id: bytes,  
     #connect request (BEP 0015)
     protocol_id = 0x41727101980
     action_connect = 0
-    transaction_id = random.randint(0, 0xFFFFFFFF)
-    packet = struct.pack(">QII", protocol_id, action_connect, transaction_id)
+    addresses = socket.getaddrinfo(
+        parsed_url.hostname,
+        parsed_url.port or 80,
+        family=socket.AF_UNSPEC,
+        type=socket.SOCK_DGRAM,
+        proto=socket.IPPROTO_UDP,
+    )
+    last_error = None
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(CONTACT_TIMEOUT)
-    try:
-        sock.sendto(packet, (parsed_url.hostname, parsed_url.port or 80))
-        data, _ = sock.recvfrom(2048)
+    for family, socktype, proto, _, address in addresses:
+        sock = socket.socket(family, socktype, proto)
+        sock.settimeout(CONTACT_TIMEOUT)
+        try:
+            transaction_id = random.randint(0, 0xFFFFFFFF)
+            packet = struct.pack(">QII", protocol_id, action_connect, transaction_id)
+            sock.sendto(packet, address)
+            data, _ = sock.recvfrom(2048)
 
-        if len(data) < 16:
-            raise ValueError("Invalid connect response size")
+            if len(data) < 16:
+                raise ValueError("Invalid connect response size")
 
-        rec_action, rec_trans_id, connection_id = struct.unpack(">IIQ", data[:16])
+            rec_action, rec_trans_id, connection_id = struct.unpack(">IIQ", data[:16])
 
-        if rec_action != 0 or rec_trans_id != transaction_id:
-            raise ValueError("Transaction ID mismatch or bad connect action")
+            if rec_action != 0 or rec_trans_id != transaction_id:
+                raise ValueError("Transaction ID mismatch or bad connect action")
 
-        # announce request
-        action_announce = 1
-        transaction_id = random.randint(0, 0xFFFFFFFF)
-        key = random.randint(0, 0xFFFFFFFF)
-        num_want = -1
+            action_announce = 1
+            transaction_id = random.randint(0, 0xFFFFFFFF)
+            key = random.randint(0, 0xFFFFFFFF)
+            num_want = -1
 
-        announce_packet = struct.pack(
-            ">QII20s20sQQQIIIiH",
-            connection_id,
-            action_announce,
-            transaction_id,
-            info_hash,
-            peer_id,
-            downloaded,
-            left,
-            uploaded,
-            event,
-            0,  #ip address 0 is the default and lets the os decide
-            key,
-            num_want,
-            listening_port
-        )
-        sock.sendto(announce_packet, (parsed_url.hostname, parsed_url.port or 80))
+            announce_packet = struct.pack(
+                ">QII20s20sQQQIIIiH",
+                connection_id,
+                action_announce,
+                transaction_id,
+                info_hash,
+                peer_id,
+                downloaded,
+                left,
+                uploaded,
+                event,
+                0,
+                key,
+                num_want,
+                listening_port,
+            )
+            sock.sendto(announce_packet, address)
 
-        # announce response
-        announce_res, _ = sock.recvfrom(2048)
-        if len(announce_res) < 20:
-            raise ValueError("Invalid announce response size")
+            announce_res, _ = sock.recvfrom(2048)
+            if len(announce_res) < 20:
+                raise ValueError("Invalid announce response size")
 
-        res_action, res_trans_id, interval, leechers, seeders = struct.unpack(
-            ">IIIII", announce_res[:20]
-        )
+            res_action, res_trans_id, interval, leechers, seeders = struct.unpack(
+                ">IIIII", announce_res[:20]
+            )
 
-        if res_action == 3:  # Tracker error action
-            error_msg = announce_res[8:].decode('utf-8', errors='ignore')
-            raise ValueError(f"Tracker error: {error_msg}")
+            if res_action == 3:
+                error_msg = announce_res[8:].decode("utf-8", errors="ignore")
+                raise ValueError(f"Tracker error: {error_msg}")
 
-        if res_action != 1 or res_trans_id != transaction_id:
-            raise ValueError("Transaction ID mismatch or bad announce action")
+            if res_action != 1 or res_trans_id != transaction_id:
+                raise ValueError("Transaction ID mismatch or bad announce action")
 
-        peer_bytes = announce_res[20:]
+            return {
+                "interval": interval,
+                "leechers": leechers,
+                "seeders": seeders,
+                "peers": announce_res[20:],
+            }
+        except (OSError, TimeoutError, ValueError) as exc:
+            last_error = exc
+        finally:
+            sock.close()
 
-        return {
-            "interval": interval,
-            "leechers": leechers,
-            "seeders": seeders,
-            "peers": peer_bytes
-        }
-    finally:
-        sock.close()
+    if last_error is not None:
+        raise last_error
+    raise OSError(f"Could not resolve UDP tracker {parsed_url.hostname}")
 
 
 def _parse_compact_peers(peer_bytes: bytes) -> List[Tuple[str, int]]:

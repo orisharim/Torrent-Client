@@ -3,15 +3,20 @@ import torrents_manager
 
      
 async def main():
-    torrent_file_path = "/home/ori/Desktop/dunkirk.torrent"
-    download_path = "/home/ori/Desktop/dunkirk"
+
+    torrent_settings = torrents_manager.TorrentSettings()
+
+    torrent_file_path = "/home/ori/Desktop/jojo.torrent"
+    download_path = "/home/ori/Desktop/jojo"
     try:
         await torrents_manager.start_torrent_client()
-
-        res = await torrents_manager.add_torrent(torrent_file_path, download_path)
+        res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)
+        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!BALLS!!!!!!!!!!!!")
         if res:
-            print("Torrent added successfully.")
+            state = await torrents_manager.get_torrent_state(torrent_file_path)
+            print(f"{len(await state.storage.get_downloaded_pieces())} : {state.storage.get_total_piece_count()}")
             while True:
+                print(f"{len(await state.storage.get_downloaded_pieces())} : {state.storage.get_total_piece_count()}")
                 await asyncio.sleep(5)
 
         else:

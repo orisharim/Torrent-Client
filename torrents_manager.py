@@ -41,11 +41,7 @@ async def start_torrent_client(settings: TorrentSettings | None = None):
             description="Torrent Client",
         )
 
-async def add_new_torrent(
-    torrent_file_path: str,
-    download_path: str,
-    settings: TorrentSettings | None = None,
-) -> bool:
+async def add_new_torrent(torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> bool:
     if torrent_file_path in torrents:
         return False
 
@@ -55,13 +51,7 @@ async def add_new_torrent(
         torrent = TorrentFile(torrent_file_path)
         storage = TorrentStorage(torrent, download_path)
         await storage.restore_pieces_from_disk()
-        session = TorrentSession(
-            peer_id,
-            LISTENING_PORT,
-            torrent,
-            storage,
-            settings,
-        )
+        session = TorrentSession(peer_id, LISTENING_PORT, torrent, storage, settings)
         if settings.enable_receiving_peers:
             await peers_receiver.register_peers(torrent.info_hash, session._peers)
             registered = True
@@ -82,10 +72,7 @@ async def add_new_torrent(
     )
     return True
 
-async def change_torrent_session_settings(
-    torrent_file_path: str,
-    settings: TorrentSettings,
-):
+async def change_torrent_session_settings(torrent_file_path: str, settings: TorrentSettings):
     state = torrents.get(torrent_file_path)
     if state is None:
         return False
@@ -114,4 +101,6 @@ async def stop_torrent_client():
     if gateway_service is not None:
         await delete_port(gateway_service, LISTENING_PORT)
         gateway_service = None
-    
+
+async def get_torrent_state(torrent_file_path: str) -> TorrentState | None:
+    return torrents.get(torrent_file_path)

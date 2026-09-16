@@ -96,8 +96,9 @@ class PeerConnection:
                 await self._ensure_stream()
                 await self._perform_handshake()
                 return True
-            except Exception:
+            except Exception as exc:
                 await self.disconnect()
+                print(f"Peer connection failed for {self._host}:{self._port}: {type(exc).__name__}: {exc}")
                 return False
 
     def _is_connected(self) -> bool:

@@ -1,3 +1,4 @@
+
 from TorrentSession.tracker_client import TrackerClient
 from TorrentSession.peers.peers import Peers
 import random
@@ -46,6 +47,7 @@ class TorrentSession:
 
         self._tracker_urls = tracker_urls
         self._trackers: list[TrackerClient] = []
+        self._tracker_start_tasks: list[asyncio.Task] = []
          
         self._requested_pieces: list[int] = []
 
@@ -117,25 +119,67 @@ class TorrentSession:
 
     async def _start_trackers(self) -> None:
         target = self._torrent_settings.tracker_amount
-        active_target = len(self._tracker_urls) if target == 0 else target
+        if target == 0:
+            active_target = len(self._tracker_urls)
+        else:
+            active_target = min(target, len(self._tracker_urls))
 
-        for tracker_url in self._tracker_urls:
-            if len(self._trackers) >= active_target:
-                break
+        if active_target == 0:
+            return
 
-            tracker = TrackerClient(
-                self._peers,
-                tracker_url,
-                self._torrent_metadata.info_hash,
-                self._peer_id,
-                self._listening_port,
-                self._torrent_storage,
+        tracker_index = 0
+        tracker_index_lock = asyncio.Lock()
+        successful_trackers: list[TrackerClient] = []
+        successful_trackers_lock = asyncio.Lock()
+        first_success = asyncio.Event()
+
+        async def find_tracker() -> None:
+            nonlocal tracker_index
+
+            while True:
+                async with successful_trackers_lock:
+                    if len(successful_trackers) >= active_target:
+                        return
+
+                async with tracker_index_lock:
+                    if tracker_index >= len(self._tracker_urls):
+                        return
+                    tracker_url = self._tracker_urls[tracker_index]
+                    tracker_index += 1
+
+                tracker = TrackerClient(
+                    self._peers,
+                    tracker_url,
+                    self._torrent_metadata.info_hash,
+                    self._peer_id,
+                    self._listening_port,
+                    self._torrent_storage,
+                )
+                try:
+                    if not await tracker.contact():
+                        continue
+                except Exception as exc:
+                    print(f"Failed to start tracker {tracker_url}: {exc}")
+                    continue
+
+                async with successful_trackers_lock:
+                    if len(successful_trackers) < active_target:
+                        successful_trackers.append(tracker)
+                        self._trackers.append(tracker)
+                        first_success.set()
+                    else:
+                        await tracker.stop_contacting()
+
+        self._tracker_start_tasks = [
+            asyncio.create_task(find_tracker())
+            for _ in range(active_target)
+        ]
+        pending = set(self._tracker_start_tasks)
+        while pending and not first_success.is_set():
+            _, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            try:
-                if await tracker.contact():
-                    self._trackers.append(tracker)
-            except Exception as exc:
-                print(f"Failed to start tracker {tracker_url}: {exc}")
 
 
     async def _validate_pieces(self):
@@ -224,15 +268,23 @@ class TorrentSession:
             async with self._requested_pieces_lock:
                 self._requested_pieces.clear()
 
+            await self._peers.close_connections()
+
     async def _stop_trackers(self):
         """Stops all trackers from contacting the tracker servers"""
+        for task in self._tracker_start_tasks:
+            if not task.done():
+                task.cancel()
+        if self._tracker_start_tasks:
+            await asyncio.gather(*self._tracker_start_tasks, return_exceptions=True)
+        self._tracker_start_tasks.clear()
         await asyncio.gather(*(tracker.stop_contacting() for tracker in self._trackers))
         self._trackers.clear()
 
     async def stop_seeding(self):
         await self._peers.stop_seeding()
         self._is_seeding = False
-    
+
     async def start_seeding(self):
         self._is_seeding = True
         await self._peers.start_seeding()
@@ -242,25 +294,30 @@ class TorrentSession:
 
     def is_downloading(self) -> bool:
         return self._is_downloading
-    
+
     async def is_complete(self) -> bool:
         return self._torrent_storage.is_complete()
-    
+
     def get_downloaded_piece_count(self) -> int:
         count = 0
         for i in range(len(self._torrent_metadata.pieces)):
             if protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), i):
                 count += 1
         return count
-    
+
     async def _download_piece(self) -> bool:
         if not self._is_downloading or await self.is_complete():
             return False
 
-        piece_index = await piece_picker.select_next_piece(self._torrent_storage.get_bitfield(), len(self._torrent_metadata.pieces), await self._peers.get_peers(), self._requested_pieces)
+        piece_index = await piece_picker.select_next_piece(
+            self._torrent_storage.get_bitfield(),
+            len(self._torrent_metadata.pieces),
+            await self._peers.get_peers(),
+            self._requested_pieces,
+        )
         if piece_index is None:
-            return False 
-            
+            return False
+
         peer = await piece_picker.select_peer_for_piece(piece_index, await self._peers.get_peers())
         if peer is None:
             return False

@@ -1,4 +1,4 @@
-from random import choice, random
+from random import choice
 from typing import Optional, Sequence
 from TorrentSession.peers.peer_connection import PeerConnection
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
@@ -15,15 +15,21 @@ async def select_next_piece(bitfield: bytes, piece_count: int, peers: list[PeerC
         if peer_bitfield is None or len(peer_bitfield) == 0 or len(peer_bitfield) < (piece_count + 7) // 8:
             continue
 
-        for piece_index in range(piece_count):  
+        for piece_index in range(piece_count):
+            if not protocol_encoder.check_bitfield_has_piece(peer_bitfield, piece_index):
+                continue
             if protocol_encoder.check_bitfield_has_piece(bitfield, piece_index) or piece_index in requested_pieces:
                 continue  
             piece_occs[piece_index] += 1
 
-    min_occs = piece_occs[0]
-    rarest_piece_idx = 0
-    for piece_index in range(piece_count):  
-        if piece_occs[piece_index] > 0 and piece_occs[piece_index] < min_occs:
+    available_pieces = [index for index, occurrences in enumerate(piece_occs) if occurrences > 0]
+    if not available_pieces:
+        return None
+
+    min_occs = piece_occs[available_pieces[0]]
+    rarest_piece_idx = available_pieces[0]
+    for piece_index in available_pieces:
+        if piece_occs[piece_index] < min_occs:
             min_occs = piece_occs[piece_index]
             rarest_piece_idx = piece_index
 
@@ -48,5 +54,5 @@ async def select_peer_for_piece(piece_index: int, peers: list[PeerConnection]) -
         if len(p.get_requested_pieces()) == min_amount:
             best_peers.append(p)
 
-    return random.choice(best_peers)
+    return choice(best_peers)
 
