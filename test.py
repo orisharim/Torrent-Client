@@ -6,8 +6,8 @@ async def main():
 
     torrent_settings = torrents_manager.TorrentSettings()
 
-    torrent_file_path = "/home/ori/Desktop/jojo.torrent"
-    download_path = "/home/ori/Desktop/jojo"
+    torrent_file_path = "/home/ori/Desktop/torrentsfortest/ubuntu-26.04.1-desktop-amd64.iso.torrent"
+    download_path = "/home/ori/Desktop/ubuntu"
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)

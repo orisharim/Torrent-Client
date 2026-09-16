@@ -17,6 +17,7 @@ class Peers:
         self._torrent_metadata = torrent_metadata
         self._torrent_storage = torrent_storage
         self._peer_id = peer_id
+        self._is_seeding = False
         
         self._reconnect_task: Optional[asyncio.Task] = None
 
@@ -64,6 +65,8 @@ class Peers:
         if not await peer.start_message_loop():
             await peer.close()
             return False
+        if self._is_seeding:
+            await peer.start_seeding()
 
         async with self._peers_lock:
             if (peer._host, peer._port) not in self._peers_info:
@@ -118,11 +121,13 @@ class Peers:
                 await peer.close()
 
     async def start_seeding(self):
+        self._is_seeding = True
         async with self._peers_lock:
             for peer in self._peers:
                 await peer.start_seeding()
 
     async def stop_seeding(self):
+        self._is_seeding = False
         async with self._peers_lock:
             for peer in self._peers:
                 await peer.stop_seeding()

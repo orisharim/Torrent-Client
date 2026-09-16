@@ -8,7 +8,7 @@ from TorrentSession.torrent_storage import TorrentStorage
 
 class PeerConnection:
     PRINT_INCOMING_MESSAGES = False
-    PRINT_DOWNLOADED_PIECES = False
+    PRINT_DOWNLOADED_PIECES = True
     PRINT_UPLOADED_PIECES = True
     
 
@@ -334,9 +334,11 @@ class PeerConnection:
 
     async def start_seeding(self):
         self._state.set_am_seeding(True)
+        return await self.send_unchoke()
 
     async def stop_seeding(self):
         self._state.set_am_seeding(False)
+        return await self.send_choke()
 
     async def _on_piece(self, payload: bytes) -> None:
         piece_index, begin, block_data = protocol_encoder.unpack_piece_payload(payload)
@@ -358,7 +360,9 @@ class PeerConnection:
             self._requested_pieces.pop(piece_index, None)
             
             if PeerConnection.PRINT_DOWNLOADED_PIECES:
-                print(f"From {int.from_bytes(self._state.peer_id)} - Piece {piece_index} completed ")
+                remote_peer_id = self._state.get_remote_peer_id()
+                peer_label = remote_peer_id.hex() if remote_peer_id is not None else f"{self._host}:{self._port}"
+                print(f"From {peer_label} - Piece {piece_index} completed")
         
     async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
@@ -504,6 +508,8 @@ class PeerConnection:
         try:
             piece_length = self._storage.get_piece_length(piece_index)
             if piece_length <= 0:
+                async with self._requested_pieces_lock:
+                    self._requested_pieces.pop(piece_index, None)
                 return False
 
             semaphore = asyncio.Semaphore(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
@@ -520,7 +526,12 @@ class PeerConnection:
 
             if requests:
                 results = await asyncio.gather(*requests)
+                if not all(results):
+                    async with self._requested_pieces_lock:
+                        self._requested_pieces.pop(piece_index, None)
                 return all(results)
+            async with self._requested_pieces_lock:
+                self._requested_pieces.pop(piece_index, None)
             return True
         except (ConnectionError, asyncio.TimeoutError, ValueError):
             async with self._requested_pieces_lock:

@@ -18,8 +18,8 @@ from TorrentSession import piece_picker
 class TorrentSession:
 
     PRINT_CONNECTION_AMOUNT = True
-    PRINT_PEER_PIECE_REQUESTS = False
-    PRINT_DOWNLOAD_SPEED = False
+    PRINT_PEER_PIECE_REQUESTS = True
+    PRINT_DOWNLOAD_SPEED = True
 
     VALIDATION_INTERVAL = 30.0
     PIECE_DOWNLOAD_TIMEOUT = 120.0
@@ -202,13 +202,17 @@ class TorrentSession:
     async def _print_download_speed(self):
         while self._is_downloading:
             await asyncio.sleep(1.0)
-            downloaded_piece_amount = self.get_downloaded_piece_count()
-            downloaded_piece_amount_difference = downloaded_piece_amount - self._last_downloaded_piece_amount
-            download_time = time.monotonic() - self._last_download_time
-            download_speed = downloaded_piece_amount_difference / download_time
-            download_speed *=  self._torrent_metadata.piece_length / (1024 * 1024) 
-            print(f"Download speed: {download_speed } megabytes/second")
-            self._last_downloaded_piece_amount = downloaded_piece_amount
+            downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
+            downloaded_bytes = sum(
+                self._torrent_storage.get_piece_length(piece_index)
+                for piece_index in downloaded_pieces
+            )
+            now = time.monotonic()
+            download_time = now - self._last_download_time
+            downloaded_bytes_difference = downloaded_bytes - self._last_downloaded_piece_amount
+            download_speed = downloaded_bytes_difference / download_time / (1024 * 1024)
+            print(f"Download speed: {download_speed:.2f} megabytes/second")
+            self._last_downloaded_piece_amount = downloaded_bytes
             self._last_download_time = time.monotonic()
 
     async def stop_downloads(self):
@@ -322,14 +326,19 @@ class TorrentSession:
         if peer is None:
             return False
 
-        if not await peer.send_piece_request(piece_index):
-            return False
-
         async with self._requested_pieces_lock:
+            if piece_index in self._requested_pieces:
+                return False
             self._requested_pieces.append(piece_index)
-            
+
         if TorrentSession.PRINT_PEER_PIECE_REQUESTS:
-            print(f"Piece {piece_index} requested from peer {peer._host}:{peer._port}")
+            print(f"Requesting piece {piece_index} from {peer._host}:{peer._port}")
+
+        if not await peer.send_piece_request(piece_index):
+            async with self._requested_pieces_lock:
+                if piece_index in self._requested_pieces:
+                    self._requested_pieces.remove(piece_index)
+            return False
 
         piece = peer.get_piece(piece_index)
         if piece is not None:
@@ -342,7 +351,7 @@ class TorrentSession:
                 return True
 
             except asyncio.TimeoutError:
-                print(f"Piece {piece_index} download timeout")
+                print(f"Piece {piece_index} download timeout from {peer._host}:{peer._port}")
                 await peer.cancel_piece(piece_index)
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:
