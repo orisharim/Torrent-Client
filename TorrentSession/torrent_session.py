@@ -36,7 +36,7 @@ class TorrentSession:
         self._peer_id = peer_id
         self._torrent_settings = torrent_settings
 
-        self._peers = Peers(peer_id, torrent_metadata, torrent_storage)
+        self._peers = Peers(peer_id, torrent_metadata, torrent_storage, torrent_settings)
         tracker_urls = []
         if torrent_metadata.announce is not None:
             tracker_urls.append(torrent_metadata.announce.decode("utf-8"))
