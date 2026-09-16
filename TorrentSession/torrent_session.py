@@ -25,7 +25,7 @@ class TorrentSession:
     PIECE_DOWNLOAD_TIMEOUT = 120.0
     PIECE_FAILS_RETRY_DELAY = 0.5
 
-    MAX_IN_FLIGHT_PIECES = 50
+    MAX_IN_FLIGHT_PIECES = 100
     MAX_IN_FLIGHT_PIECES_PER_PEER = 10
 
     def __init__(self, peer_id: bytes, listening_port: int, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings) -> None:
@@ -322,7 +322,7 @@ class TorrentSession:
         if piece_index is None:
             return False
 
-        peer = await piece_picker.select_peer_for_piece(piece_index, await self._peers.get_peers())
+        peer = await piece_picker.select_peer_for_piece(piece_index, await self._peers.get_peers(), self.MAX_IN_FLIGHT_PIECES_PER_PEER )
         if peer is None:
             return False
 

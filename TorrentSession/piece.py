@@ -6,10 +6,14 @@ class Piece:
         self.index = index
         self.length = length
         self.blocks: dict[int, bytes] = {}  # offset - data
+        self._received_bytes = 0
         self.is_complete_event = asyncio.Event()
 
     def add_block(self, offset: int, data: bytes) -> None:
+        if offset in self.blocks:
+            return
         self.blocks[offset] = data
+        self._received_bytes += len(data)
         if self.is_complete():
             self.is_complete_event.set()
     
@@ -20,7 +24,7 @@ class Piece:
         return b"".join(self.blocks[o] for o in sorted(self.blocks.keys()))
 
     def is_complete(self) -> bool:
-        return len(self.get_assembled_data()) == self.length
+        return self._received_bytes >= self.length
 
     async def wait_until_complete(self) -> None:
         await self.is_complete_event.wait()

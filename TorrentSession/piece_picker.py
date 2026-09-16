@@ -35,9 +35,12 @@ async def select_next_piece(bitfield: bytes, piece_count: int, peers: list[PeerC
 
     return rarest_piece_idx
 
-async def select_peer_for_piece(piece_index: int, peers: list[PeerConnection]) -> Optional[PeerConnection]:
+async def select_peer_for_piece(piece_index: int, peers: list[PeerConnection], max_pieces_per_peer: int ) -> Optional[PeerConnection]:
     peers_with_piece = []
     for peer in peers:
+        requested_piece_count = len(peer.get_requested_pieces())
+        if requested_piece_count >= max_pieces_per_peer:
+            continue
         if peer.can_download_piece(piece_index):
             peers_with_piece.append(peer)
 
