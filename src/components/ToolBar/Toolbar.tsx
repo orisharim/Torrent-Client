@@ -9,14 +9,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLanguage } from "../../context/LanguageContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
 import ConfirmDialog from "../UI/ConfirmDialog";
 
 const Toolbar = () => {
-  const { t } = useLanguage();
   const { theme, setTheme } = useTheme();
   const { torrents, selected, pauseAll, deleteTorrents } = useTorrents();
   const { filterText, setFilterText, submitSearch, openAddDialog, showToast } = useUI();
@@ -46,7 +44,7 @@ const Toolbar = () => {
 
   const handleStopAll = () => {
     pauseAll();
-    showToast(t("torrent.stopAll"));
+    showToast("Stop All");
   };
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -66,12 +64,12 @@ const Toolbar = () => {
         className="flex font-bold items-center gap-2 px-3 py-2 text-sm transition text-stone-800 dark:text-stone-200 hover:bg-blue-200 dark:hover:bg-blue-900 rounded"
       >
         <Plus size={20} className="font-bold" />
-        <span className="hidden sm:inline">{t("toolbar.addTorrent")}</span>
+        <span className="hidden sm:inline">Add Torrent</span>
       </button>
 
       <ToolbarButton
         icon={<Link size={16} />}
-        label={t("toolbar.magnet")}
+        label="Magnet"
         onClick={() => openAddDialog("magnet")}
       />
 
@@ -79,14 +77,14 @@ const Toolbar = () => {
 
       <ToolbarButton
         icon={<Square size={16} />}
-        label={t("toolbar.stop")}
+        label="Stop"
         onClick={handleStopAll}
         disabled={!hasDownloading}
       />
 
       <ToolbarButton
         icon={<Trash2 size={16} />}
-        label={t("toolbar.remove")}
+        label="Remove"
         onClick={() => setConfirmRemove(true)}
         disabled={selected.size === 0}
         danger
@@ -101,8 +99,8 @@ const Toolbar = () => {
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             onKeyDown={handleSearchKeyDown}
-            placeholder={t("toolbar.search")}
-            title={t("toolbar.searchHint")}
+            placeholder="Search..."
+            title="Type to filter — press Enter to search for new torrents"
             className="w-full min-w-0 text-sm bg-transparent outline-none text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500"
           />
           {filterText !== "" && (
@@ -129,12 +127,12 @@ const Toolbar = () => {
         <ConfirmDialog
           title={
             selected.size > 1
-              ? t("torrent.confirmDeleteMany").replace("{count}", String(selected.size))
-              : t("torrent.confirmDelete")
+              ? `Delete ${selected.size} torrents?`
+              : "Delete Torrent?"
           }
-          message={t("torrent.undone")}
-          confirmLabel={t("torrent.delete")}
-          cancelLabel={t("torrent.cancel")}
+          message="This action cannot be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
           onConfirm={() => { deleteTorrents([...selected]); setConfirmRemove(false); }}
           onCancel={() => setConfirmRemove(false)}
         />

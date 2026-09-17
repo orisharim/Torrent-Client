@@ -6,12 +6,10 @@ import EmptyState from "../UI/EmptyState";
 import IconBox from "../UI/IconBox";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
-import { useLanguage } from "../../context/LanguageContext";
 import * as torrentService from "../../services/torrentService";
 import type { TorrentDetail, TorrentPageStats } from "../../services/types";
 
 export const TorrentPage = () => {
-  const { t } = useLanguage();
   const [details, setDetails] = useState<TorrentDetail[]>([]);
   const [pageStats, setPageStats] = useState<TorrentPageStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,17 +24,17 @@ export const TorrentPage = () => {
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
-      <PageHeader title={t("torrents.title")} subtitle={t("torrents.subtitle")} />
+      <PageHeader title="Torrents" subtitle="Monitor torrent files, peers, trackers, and speed" />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard label={t("torrents.total")} value={details.length} />
+        <StatCard label="Total Torrents" value={details.length} />
         <StatCard
-          label={t("torrents.peers")}
+          label="Active Peers"
           value={pageStats ? pageStats.totalPeers : "—"}
           valueClassName="text-blue-600 dark:text-blue-400"
         />
         <StatCard
-          label={t("torrents.speed")}
+          label="Current Speed"
           value={pageStats ? pageStats.currentSpeed : "—"}
           valueClassName="text-green-600 dark:text-green-400"
         />
@@ -44,23 +42,23 @@ export const TorrentPage = () => {
 
       <DataTable
         icon={<FileDown className="w-4 h-4" />}
-        title={t("torrents.list")}
+        title="Torrent List"
         count={details.length}
-        countLabel={t("common.items")}
+        countLabel="items"
         emptyState={
           <EmptyState
             icon={<FileDown size={28} />}
-            title={loading ? t("empty.loading") : t("empty.noTorrents")}
+            title={loading ? "Loading…" : "No torrents yet"}
           />
         }
       >
         <thead className="bg-white dark:bg-stone-800 border-b border-blue-100 dark:border-blue-900">
           <tr className="text-start text-stone-500 dark:text-stone-400">
-            <th className={thCls}>{t("torrents.files")}</th>
-            <th className={thCls}>{t("torrents.info")}</th>
-            <th className={`${thCls} hidden md:table-cell`}>{t("torrents.peers")}</th>
-            <th className={`${thCls} hidden md:table-cell`}>{t("torrents.trackers")}</th>
-            <th className={thCls}>{t("table.speed")}</th>
+            <th className={thCls}>Files</th>
+            <th className={thCls}>Info</th>
+            <th className={`${thCls} hidden md:table-cell`}>Active Peers</th>
+            <th className={`${thCls} hidden md:table-cell`}>Trackers</th>
+            <th className={thCls}>Speed</th>
           </tr>
         </thead>
         <tbody>

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from "react";
 
-export type Page = "home" | "torrent" | "network" | "devices" | "settings" | "search";
+export type Page = "home" | "torrent" | "settings" | "search";
 export type AddDialogTab = "magnet" | "file";
 
 export type Toast = {

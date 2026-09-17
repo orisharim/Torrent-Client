@@ -29,7 +29,7 @@ const TorrentContext = createContext<TorrentContextType>({
   selected: new Set(),
   setSelected: () => {},
   toggleSelect: () => {},
-  addTorrent: async () => ({ id: 0, name: "", size: 0, progress: 0, speed: 0, status: "Paused", health: "Good" }),
+  addTorrent: async () => ({ id: 0, name: "", size: 0, progress: 0, speed: 0, status: "Paused" }),
   pauseTorrent: () => {},
   resumeTorrent: () => {},
   pauseAll: () => {},

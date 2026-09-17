@@ -3,13 +3,11 @@ import { Plus, Link, Download, Upload, Activity, Share2 } from "lucide-react";
 import Button from "../UI/Button";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
-import { useLanguage } from "../../context/LanguageContext";
 import { useUI } from "../../context/UIContext";
 import * as statsService from "../../services/statsService";
 import type { HomeStats } from "../../services/types";
 
 export const HomePage = () => {
-  const { t } = useLanguage();
   const { openAddDialog } = useUI();
   const [homeStats, setHomeStats] = useState<HomeStats | null>(null);
 
@@ -19,22 +17,22 @@ export const HomePage = () => {
 
   const stats = homeStats
     ? [
-        { label: t("home.download"), value: homeStats.downloadSpeed,           icon: <Download className="w-5 h-5" /> },
-        { label: t("home.upload"),   value: homeStats.uploadSpeed,             icon: <Upload className="w-5 h-5" />   },
-        { label: t("home.active"),   value: homeStats.activeTorrents,          icon: <Activity className="w-5 h-5" /> },
-        { label: t("home.seeding"),  value: homeStats.seedingTorrents,         icon: <Share2 className="w-5 h-5" />   },
+        { label: "Download", value: homeStats.downloadSpeed,           icon: <Download className="w-5 h-5" /> },
+        { label: "Upload",   value: homeStats.uploadSpeed,             icon: <Upload className="w-5 h-5" />   },
+        { label: "Active",   value: homeStats.activeTorrents,          icon: <Activity className="w-5 h-5" /> },
+        { label: "Seeding",  value: homeStats.seedingTorrents,         icon: <Share2 className="w-5 h-5" />   },
       ]
     : [];
 
   return (
     <div className="w-full bg-stone-50 dark:bg-stone-900 p-6 flex flex-col gap-6">
       <PageHeader
-        title={t("home.title")}
-        subtitle={t("home.subtitle")}
+        title="Home"
+        subtitle="Overview of your torrent activity"
         actions={
           <>
-            <Button text={t("home.addTorrent")} icon={<Plus size={16} />} action={() => openAddDialog("magnet")} variant="primary" />
-            <Button text={t("home.magnet")} icon={<Link size={16} />} action={() => openAddDialog("magnet")} />
+            <Button text="Add Torrent" icon={<Plus size={16} />} action={() => openAddDialog("magnet")} variant="primary" />
+            <Button text="Magnet" icon={<Link size={16} />} action={() => openAddDialog("magnet")} />
           </>
         }
       />

@@ -11,7 +11,6 @@ struct Torrent {
     progress: f64,
     speed: f64,
     status: String,
-    health: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -44,53 +43,14 @@ enum AddTorrentPayload {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct FeedItem {
-    id: u32,
-    source: String,
-    name: String,
-    size: String,
-    date: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FeedStats {
-    new_today: u32,
-    downloads_ready: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct Device {
-    id: u32,
-    name: String,
-    #[serde(rename = "type")]
-    device_type: String,
-    status: String,
-    last_seen: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 struct AppSettings {
-    start_on_startup: bool,
-    minimize_to_tray: bool,
-    language: String,
-    save_path: String,
-    download_limit: u32,
-    upload_limit: u32,
-    auto_start: bool,
-    notify_on_complete: bool,
-    listening_port: u32,
-    #[serde(rename = "enableUPnP")]
-    enable_upnp: bool,
-    #[serde(rename = "enableDHT")]
-    enable_dht: bool,
-    proxy: String,
-    enable_encryption: bool,
-    anonymous_mode: bool,
     max_connections: u32,
-    max_peers_per_torrent: u32,
+    download_speed_limit: f64,
+    upload_speed_limit: f64,
+    tracker_amount: u32,
+    enable_receiving_peers: bool,
+    enable_dht: bool,
+    enable_port_forwarding: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -106,22 +66,13 @@ struct HomeStats {
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        start_on_startup: true,
-        minimize_to_tray: true,
-        language: "English".to_string(),
-        save_path: "/Users/user/Downloads".to_string(),
-        download_limit: 0,
-        upload_limit: 50,
-        auto_start: true,
-        notify_on_complete: true,
-        listening_port: 6881,
-        enable_upnp: true,
+        max_connections: 50,
+        download_speed_limit: 0.0,
+        upload_speed_limit: 0.0,
+        tracker_amount: 4,
+        enable_receiving_peers: true,
         enable_dht: true,
-        proxy: "None".to_string(),
-        enable_encryption: true,
-        anonymous_mode: false,
-        max_connections: 200,
-        max_peers_per_torrent: 50,
+        enable_port_forwarding: true,
     }
 }
 
@@ -156,7 +107,7 @@ fn add_torrent(payload: AddTorrentPayload) -> Torrent {
         AddTorrentPayload::File { file_name } => file_name.clone(),
     };
     log::info!("add_torrent: {}", name);
-    Torrent { id: 0, name, size: 0.0, progress: 0.0, speed: 0.0, status: "Downloading".to_string(), health: "Good".to_string() }
+    Torrent { id: 0, name, size: 0.0, progress: 0.0, speed: 0.0, status: "Downloading".to_string() }
 }
 
 #[tauri::command]
@@ -189,53 +140,6 @@ fn clear_completed() {
     // TODO: remove all completed torrents from your engine
 }
 
-// ── Feed Commands ─────────────────────────────────────────────────────────────
-
-#[tauri::command]
-fn get_feeds() -> Vec<FeedItem> {
-    // TODO: return feed items from your RSS manager
-    vec![]
-}
-
-#[tauri::command]
-fn get_feed_stats() -> FeedStats {
-    // TODO: return feed statistics from your RSS manager
-    FeedStats { new_today: 0, downloads_ready: 0 }
-}
-
-#[tauri::command]
-fn add_feed(url: String) {
-    log::info!("add_feed: {}", url);
-    // TODO: register feed URL in your RSS manager
-}
-
-#[tauri::command]
-fn refresh_feeds() -> Vec<FeedItem> {
-    log::info!("refresh_feeds");
-    // TODO: fetch all feeds and return updated items
-    vec![]
-}
-
-#[tauri::command]
-fn download_feed_item(id: u32) {
-    log::info!("download_feed_item: {}", id);
-    // TODO: trigger download for the feed item
-}
-
-// ── Device Commands ──────────────────────────────────────────────────────────
-
-#[tauri::command]
-fn get_devices() -> Vec<Device> {
-    // TODO: return connected devices from your device manager
-    vec![]
-}
-
-#[tauri::command]
-fn disconnect_device(id: u32) {
-    log::info!("disconnect_device: {}", id);
-    // TODO: disconnect the device
-}
-
 // ── Settings Commands ────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -246,7 +150,7 @@ fn get_settings() -> AppSettings {
 
 #[tauri::command]
 fn save_settings(settings: AppSettings) {
-    log::info!("save_settings: language={}", settings.language);
+    log::info!("save_settings: max_connections={}", settings.max_connections);
     // TODO: persist settings to disk
 }
 
@@ -294,13 +198,6 @@ pub fn run() {
             delete_torrents,
             update_torrent_status,
             clear_completed,
-            get_feeds,
-            get_feed_stats,
-            add_feed,
-            refresh_feeds,
-            download_feed_item,
-            get_devices,
-            disconnect_device,
             get_settings,
             save_settings,
             reset_settings,

@@ -1,12 +1,9 @@
 import Toolbar from "../ToolBar/Toolbar";
 import { HomePage } from "../Views/HomePage";
 import { TorrentPage } from "../Views/TorrentPage";
-import { FeedsPage } from "../Views/FeedsPage";
-import { DevicePage } from "../Views/DevicePage";
 import { SettingsPage } from "../Views/SettingsPage";
 import { SearchPage } from "../Views/SearchPage";
 import { TorrentTable } from "./TorrentTable";
-import Tabs from "./Tabs";
 import { AddTorrentDialog } from "../Dialogs/AddTorrentDialog";
 import { ToastViewport } from "../UI/Toast";
 import { useUI } from "../../context/UIContext";
@@ -22,15 +19,9 @@ export const Dashboard = () => {
         <TorrentTable />
       </div>
 
-      <Tabs />
-
       {page === "home" && <HomePage />}
 
       {page === "torrent" && <TorrentPage />}
-
-      {page === "network" && <FeedsPage />}
-
-      {page === "devices" && <DevicePage />}
 
       {page === "search" && <SearchPage />}
 
