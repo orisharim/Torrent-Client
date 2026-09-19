@@ -79,6 +79,7 @@ class TorrentStorage:
 
         self.files = torrent_metadata.files_info
         self._build_file_offset_map()
+        asyncio.create_task(self.restore_pieces_from_disk())
 
     async def get_downloaded_pieces(self) -> set[int]:
         async with self._downloaded_pieces_lock:

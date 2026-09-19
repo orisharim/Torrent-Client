@@ -182,6 +182,11 @@ class Peers:
                 if peer in self._connections:
                     self._connections.remove(peer)
 
+    async def has_connected_peers(self) -> bool:
+        await self._remove_closed_connections()
+        async with self._peers_lock:
+            return len(self._connections) > 0
+
     async def close_connections(self):
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()

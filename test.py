@@ -11,12 +11,12 @@ async def main():
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)
-        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!BALLS!!!!!!!!!!!!")
+        await torrents_manager.change_torrent_status(torrent_file_path, is_downloading=False, is_seeding=True)
+        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
+
         if res:
-            state = await torrents_manager.get_torrent_state(torrent_file_path)
-            print(f"{len(await state.storage.get_downloaded_pieces())} : {state.storage.get_total_piece_count()}")
             while True:
-                print(f"{len(await state.storage.get_downloaded_pieces())} : {state.storage.get_total_piece_count()}")
+                print("status: ", await torrents_manager.get_torrent_status(torrent_file_path))
                 await asyncio.sleep(5)
 
         else:
