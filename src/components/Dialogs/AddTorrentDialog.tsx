@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
-import { FileUp, Link, X } from "lucide-react";
+import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FileUp, FolderOpen, Link, X } from "lucide-react";
 import Modal from "../UI/Modal";
 import Button from "../UI/Button";
 import { useTorrents } from "../../context/TorrentContext";
@@ -12,25 +13,33 @@ export const AddTorrentDialog = () => {
 
   const [tab, setTab] = useState<AddDialogTab>(addDialog.tab);
   const [magnetUri, setMagnetUri] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [torrentFilePath, setTorrentFilePath] = useState("");
+  const [downloadPath, setDownloadPath] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const magnetValid = magnetUri.trim().startsWith("magnet:?");
-  const canSubmit = !submitting && (tab === "magnet" ? magnetValid : file !== null);
+  // TODO: backend has no magnet-link endpoint yet — only add-by-file-path is wired up
+  const canSubmit = !submitting && tab === "file" && torrentFilePath.trim() !== "" && downloadPath.trim() !== "";
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    // REPLACE: for files, read bytes / use tauri-plugin-dialog for a real filesystem path
-    // once a torrent engine consumes the .torrent contents
-    await addTorrent(
-      tab === "magnet"
-        ? { type: "magnet", uri: magnetUri.trim() }
-        : { type: "file", fileName: file!.name }
-    );
+    await addTorrent(torrentFilePath.trim(), downloadPath.trim());
     showToast("Torrent added");
     closeAddDialog();
+  };
+
+  const browseTorrentFile = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "Torrent files", extensions: ["torrent"] }],
+    });
+    if (typeof path === "string") setTorrentFilePath(path);
+  };
+
+  const browseDownloadFolder = async () => {
+    const path = await open({ directory: true, multiple: false });
+    if (typeof path === "string") setDownloadPath(path);
   };
 
   const tabCls = (active: boolean) =>
@@ -71,34 +80,62 @@ export const AddTorrentDialog = () => {
               type="text"
               value={magnetUri}
               onChange={(e) => setMagnetUri(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
               placeholder="magnet:?xt=..."
-              className="w-full text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2.5 bg-white dark:bg-stone-700 text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled
+              className="w-full text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2.5 bg-white dark:bg-stone-700 text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {magnetUri.trim() !== "" && !magnetValid && (
               <p className="text-xs text-red-500 dark:text-red-400">Must be a valid magnet link (magnet:?...)</p>
             )}
+            <p className="text-xs text-stone-500 dark:text-stone-400">Magnet links aren't supported by the backend yet — use the Torrent File tab.</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".torrent"
-              className="hidden"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-blue-200 dark:border-blue-800 rounded-xl py-8 px-4 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-            >
-              <FileUp size={22} />
-              Choose a .torrent file
-            </button>
-            <p className="text-xs text-stone-500 dark:text-stone-400 text-center truncate" title={file?.name}>
-              {file ? file.name : "No file selected"}
-            </p>
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-stone-600 dark:text-stone-400">Torrent file path</label>
+              <div className="flex gap-1.5">
+                <input
+                  autoFocus
+                  type="text"
+                  value={torrentFilePath}
+                  onChange={(e) => setTorrentFilePath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                  placeholder="C:\path\to\file.torrent"
+                  className="flex-1 min-w-0 text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2.5 bg-white dark:bg-stone-700 text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={browseTorrentFile}
+                  title="Browse for a .torrent file"
+                  className="shrink-0 flex items-center gap-1.5 px-3 rounded-lg text-sm border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                >
+                  <FileUp size={14} />
+                  Browse
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-stone-600 dark:text-stone-400">Download folder</label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={downloadPath}
+                  onChange={(e) => setDownloadPath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                  placeholder="C:\Downloads"
+                  className="flex-1 min-w-0 text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2.5 bg-white dark:bg-stone-700 text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={browseDownloadFolder}
+                  title="Browse for a download folder"
+                  className="shrink-0 flex items-center gap-1.5 px-3 rounded-lg text-sm border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                >
+                  <FolderOpen size={14} />
+                  Browse
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

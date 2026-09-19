@@ -17,7 +17,7 @@ const statusPriority: Record<Torrent["status"], number> = {
 };
 
 const formatEstimatedTime = (torrent: Torrent) => {
-  if (torrent.status !== "Downloading" || torrent.speed <= 0 || torrent.progress >= 100) {
+  if (torrent.status !== "Downloading" || torrent.speed <= 0 || torrent.progress >= 100 || torrent.size <= 0) {
     return "—";
   }
 
@@ -42,7 +42,7 @@ export const TorrentTable = () => {
   } = useTorrents();
   const { filterText, openAddDialog } = useUI();
 
-  const [pendingDelete, setPendingDelete] = useState<number[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<string[]>([]);
   const [actionsFor, setActionsFor] = useState<Torrent | null>(null);
 
   const filtered = useMemo(() => {
@@ -183,8 +183,8 @@ type TableRowProps = {
   index: number;
   torrent: Torrent;
   selected: boolean;
-  onToggleSelect: (id: number) => void;
-  onUpdateStatus: (id: number, status: Torrent["status"]) => void;
+  onToggleSelect: (id: string) => void;
+  onUpdateStatus: (id: string, status: Torrent["status"]) => void;
   onOpenActions: (torrent: Torrent) => void;
 };
 
@@ -204,7 +204,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onUpdateStatus, on
     <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">
       <div className="max-w-64 truncate" title={torrent.name}>{torrent.name}</div>
     </td>
-    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{torrent.size} GB</td>
+    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{torrent.size > 0 ? `${torrent.size} GB` : "—"}</td>
 
     <td className="px-4 py-3">
       <div className="flex items-center gap-2">

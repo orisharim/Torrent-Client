@@ -1,21 +1,18 @@
 import { useEffect, useState } from "react";
-import { Check, Download, Loader2, Search, SearchX } from "lucide-react";
+import { Download, Loader2, Search, SearchX } from "lucide-react";
 import DataTable from "../UI/DataTable";
 import { tableRowCls, thCls } from "../UI/tableStyles";
 import EmptyState from "../UI/EmptyState";
 import PageHeader from "../UI/PageHeader";
-import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
 import * as searchService from "../../services/searchService";
 import type { SearchResult } from "../../services/types";
 
 export const SearchPage = () => {
-  const { addTorrent } = useTorrents();
   const { searchQuery, showToast } = useUI();
 
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loadedQuery, setLoadedQuery] = useState("");
-  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
 
   const loading = searchQuery !== "" && loadedQuery !== searchQuery;
 
@@ -25,16 +22,17 @@ export const SearchPage = () => {
     searchService.searchTorrents(searchQuery).then((found) => {
       if (cancelled) return;
       setResults(found);
-      setAddedIds(new Set());
       setLoadedQuery(searchQuery);
     });
     return () => { cancelled = true; };
   }, [searchQuery]);
 
-  const handleDownload = async (result: SearchResult) => {
-    setAddedIds((prev) => new Set(prev).add(result.id));
-    await addTorrent({ type: "magnet", uri: result.magnet });
-    showToast("Torrent added");
+  // TODO: backend only accepts add-by-local-file-path — search results are remote magnet
+  // links with no local torrentFilePath, so this can't be wired up until the backend
+  // supports adding by magnet/URL (or fetches the .torrent itself before handing back a path).
+  const handleDownload = (result: SearchResult) => {
+    void result;
+    showToast("Adding from search isn't supported by the backend yet");
   };
 
   return (
@@ -74,36 +72,30 @@ export const SearchPage = () => {
           </tr>
         </thead>
         <tbody>
-          {results.map((result, index) => {
-            const added = addedIds.has(result.id);
-            return (
-              <tr key={result.id} className={tableRowCls(index)}>
-                <td className="px-4 py-4">
-                  <div className="font-medium text-stone-800 dark:text-stone-100 max-w-[20rem] truncate" title={result.name}>
-                    {result.name}
-                  </div>
-                  <div className="text-xs text-stone-400 dark:text-stone-500">{result.source}</div>
-                </td>
-                <td className="px-4 py-4 text-stone-600 dark:text-stone-300 whitespace-nowrap">{result.size} GB</td>
-                <td className="px-4 py-4 font-medium text-green-600 dark:text-green-400">{result.seeds}</td>
-                <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">{result.peers}</td>
-                <td className="px-4 py-4">
-                  <button
-                    onClick={() => handleDownload(result)}
-                    disabled={added}
-                    className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition whitespace-nowrap ${
-                      added
-                        ? "text-green-600 dark:text-green-400 cursor-default"
-                        : "border border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/40"
-                    }`}
-                  >
-                    {added ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
-                    {added ? "Added" : "Download"}
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
+          {results.map((result, index) => (
+            <tr key={result.id} className={tableRowCls(index)}>
+              <td className="px-4 py-4">
+                <div className="font-medium text-stone-800 dark:text-stone-100 max-w-[20rem] truncate" title={result.name}>
+                  {result.name}
+                </div>
+                <div className="text-xs text-stone-400 dark:text-stone-500">{result.source}</div>
+              </td>
+              <td className="px-4 py-4 text-stone-600 dark:text-stone-300 whitespace-nowrap">{result.size} GB</td>
+              <td className="px-4 py-4 font-medium text-green-600 dark:text-green-400">{result.seeds}</td>
+              <td className="px-4 py-4 text-stone-600 dark:text-stone-300 hidden md:table-cell">{result.peers}</td>
+              <td className="px-4 py-4">
+                <button
+                  onClick={() => handleDownload(result)}
+                  disabled
+                  title="Not supported yet — backend only adds torrents by local file path"
+                  className="inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm whitespace-nowrap text-stone-400 dark:text-stone-500 border border-stone-200 dark:border-stone-700 cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+              </td>
+            </tr>
+          ))}
         </tbody>
       </DataTable>
     </div>

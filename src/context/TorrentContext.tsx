@@ -1,35 +1,39 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
-import * as torrentService from "../services/torrentService";
-import type { AddTorrentPayload, Torrent } from "../services/types";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useTorrent } from "../hooks/useTorrent";
+import type { TorrentStatus } from "../services/types";
 
-// Re-export so existing imports from this file continue to work
-export type { Torrent } from "../services/types";
+export type Torrent = {
+  id: string; // torrentFilePath
+  name: string;
+  size: number; // TODO: backend doesn't report a byte size yet — always 0 for now
+  progress: number; // 0-100
+  speed: number; // MB/s
+  status: TorrentStatus;
+};
 
 type TorrentContextType = {
   torrents: Torrent[];
-  setTorrents: React.Dispatch<React.SetStateAction<Torrent[]>>;
   loading: boolean;
-  selected: Set<number>;
-  setSelected: React.Dispatch<React.SetStateAction<Set<number>>>;
-  toggleSelect: (id: number) => void;
-  addTorrent: (payload: AddTorrentPayload) => Promise<Torrent>;
-  pauseTorrent: (id: number) => void;
-  resumeTorrent: (id: number) => void;
+  selected: Set<string>;
+  setSelected: React.Dispatch<React.SetStateAction<Set<string>>>;
+  toggleSelect: (id: string) => void;
+  addTorrent: (torrentFilePath: string, downloadPath: string) => Promise<void>;
+  pauseTorrent: (id: string) => void;
+  resumeTorrent: (id: string) => void;
   pauseAll: () => void;
   pauseSelected: () => void;
-  deleteTorrents: (ids: number[]) => void;
-  updateTorrentStatus: (id: number, status: Torrent["status"]) => void;
+  deleteTorrents: (ids: string[]) => void;
+  updateTorrentStatus: (id: string, status: TorrentStatus) => void;
   clearCompleted: () => void;
 };
 
 const TorrentContext = createContext<TorrentContextType>({
   torrents: [],
-  setTorrents: () => {},
   loading: true,
   selected: new Set(),
   setSelected: () => {},
   toggleSelect: () => {},
-  addTorrent: async () => ({ id: 0, name: "", size: 0, progress: 0, speed: 0, status: "Paused" }),
+  addTorrent: async () => {},
   pauseTorrent: () => {},
   resumeTorrent: () => {},
   pauseAll: () => {},
@@ -41,39 +45,36 @@ const TorrentContext = createContext<TorrentContextType>({
 
 export const useTorrents = () => useContext(TorrentContext);
 
+const deriveStatus = (t: { is_downloading: boolean; is_seeding: boolean; downloaded_pieces: number; total_pieces: number }): TorrentStatus => {
+  if (t.is_downloading) return "Downloading";
+  if (t.is_seeding) return "Seeding";
+  if (t.total_pieces > 0 && t.downloaded_pieces >= t.total_pieces) return "Completed";
+  return "Paused";
+};
+
+const torrentName = (torrentFilePath: string) => {
+  const base = torrentFilePath.split(/[\\/]/).pop() ?? torrentFilePath;
+  return base.replace(/\.torrent$/i, "");
+};
+
 export const TorrentProvider = ({ children }: { children: React.ReactNode }) => {
-  const [torrents, setTorrents] = useState<Torrent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const {
+    torrents: rawTorrents, loading,
+    addTorrent: hookAddTorrent, pauseTorrent: hookPauseTorrent, resumeTorrent: hookResumeTorrent,
+    deleteTorrent: hookDeleteTorrent, setStatus,
+  } = useTorrent();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Initial load from service — swap torrentService.getTorrents for real API call
-  useEffect(() => {
-    torrentService.getTorrents().then((list) => {
-      setTorrents(list);
-      setLoading(false);
-    });
-  }, []);
+  const torrents = useMemo<Torrent[]>(() => rawTorrents.map((t) => ({
+    id: t.torrentFilePath,
+    name: torrentName(t.torrentFilePath),
+    size: 0,
+    progress: t.total_pieces > 0 ? (t.downloaded_pieces / t.total_pieces) * 100 : 0,
+    speed: t.download_speed,
+    status: deriveStatus(t),
+  })), [rawTorrents]);
 
-  // Demo simulation — remove this block when connecting real-time API/WebSocket
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTorrents((prev) =>
-        prev.map((torrent) => {
-          if (torrent.status !== "Downloading") return torrent;
-          const newProgress = Math.min(torrent.progress + Math.random() * 3, 100);
-          return {
-            ...torrent,
-            progress: newProgress,
-            speed: newProgress >= 100 ? 0 : Number((Math.random() * 5).toFixed(1)),
-            status: newProgress >= 100 ? "Completed" : "Downloading",
-          };
-        })
-      );
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const toggleSelect = useCallback((id: number) => {
+  const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) { next.delete(id); } else { next.add(id); }
@@ -81,70 +82,44 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
     });
   }, []);
 
-  const addTorrent = useCallback(async (payload: AddTorrentPayload): Promise<Torrent> => {
-    const result = await torrentService.addTorrent(payload);
-    let added: Torrent = result;
-    setTorrents((prev) => {
-      // REPLACE: engine returns real unique ids — stub always returns id: 0
-      const id = result.id === 0 || prev.some((t) => t.id === result.id) ? Date.now() : result.id;
-      added = { ...result, id };
-      return [...prev, added];
-    });
-    return added;
-  }, []);
+  const addTorrent = useCallback(async (torrentFilePath: string, downloadPath: string) => {
+    await hookAddTorrent(torrentFilePath, downloadPath);
+  }, [hookAddTorrent]);
 
-  const pauseTorrent = useCallback((id: number) => {
-    torrentService.pauseTorrent(id); // REPLACE: optimistic update, rollback on error
-    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status: "Paused", speed: 0 } : torrent)));
-  }, []);
-
-  const resumeTorrent = useCallback((id: number) => {
-    torrentService.resumeTorrent(id); // REPLACE: optimistic update, rollback on error
-    setTorrents((prev) =>
-      prev.map((torrent) => (torrent.id === id && torrent.progress < 100 ? { ...torrent, status: "Downloading", speed: 1.5 } : torrent))
-    );
-  }, []);
+  const pauseTorrent = useCallback((id: string) => { hookPauseTorrent(id); }, [hookPauseTorrent]);
+  const resumeTorrent = useCallback((id: string) => { hookResumeTorrent(id); }, [hookResumeTorrent]);
 
   const pauseAll = useCallback(() => {
-    torrents
-      .filter((torrent) => torrent.status === "Downloading")
-      .forEach((torrent) => torrentService.pauseTorrent(torrent.id)); // REPLACE: batch API call
-    setTorrents((prev) =>
-      prev.map((torrent) => (torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent))
-    );
-  }, [torrents]);
+    rawTorrents.filter((t) => t.is_downloading).forEach((t) => hookPauseTorrent(t.torrentFilePath));
+  }, [rawTorrents, hookPauseTorrent]);
 
   const pauseSelected = useCallback(() => {
-    torrents
-      .filter((torrent) => selected.has(torrent.id) && torrent.status === "Downloading")
-      .forEach((torrent) => torrentService.pauseTorrent(torrent.id)); // REPLACE: batch API call
-    setTorrents((prev) =>
-      prev.map((torrent) =>
-        selected.has(torrent.id) && torrent.status === "Downloading" ? { ...torrent, status: "Paused", speed: 0 } : torrent
-      )
-    );
-  }, [torrents, selected]);
+    rawTorrents
+      .filter((t) => selected.has(t.torrentFilePath) && t.is_downloading)
+      .forEach((t) => hookPauseTorrent(t.torrentFilePath));
+  }, [rawTorrents, selected, hookPauseTorrent]);
 
-  const deleteTorrents = useCallback((ids: number[]) => {
-    torrentService.deleteTorrents(ids); // REPLACE: await + error handling
-    setTorrents((prev) => prev.filter((torrent) => !ids.includes(torrent.id)));
+  const deleteTorrents = useCallback((ids: string[]) => {
+    ids.forEach((id) => hookDeleteTorrent(id));
     setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
-  }, []);
+  }, [hookDeleteTorrent]);
 
-  const updateTorrentStatus = useCallback((id: number, status: Torrent["status"]) => {
-    torrentService.updateTorrentStatus(id, status); // REPLACE: await + error handling
-    setTorrents((prev) => prev.map((torrent) => (torrent.id === id ? { ...torrent, status } : torrent)));
-  }, []);
+  const updateTorrentStatus = useCallback((id: string, status: TorrentStatus) => {
+    if (status === "Downloading") hookResumeTorrent(id);
+    else if (status === "Paused") hookPauseTorrent(id);
+    else if (status === "Seeding") setStatus(id, false, true);
+  }, [hookResumeTorrent, hookPauseTorrent, setStatus]);
 
   const clearCompleted = useCallback(() => {
-    torrentService.clearCompleted(); // REPLACE: API call
-    setTorrents((prev) => prev.filter((t) => t.status !== "Completed"));
-  }, []);
+    rawTorrents
+      .filter((t) => !t.is_downloading && !t.is_seeding && t.total_pieces > 0 && t.downloaded_pieces >= t.total_pieces)
+      .forEach((t) => hookDeleteTorrent(t.torrentFilePath));
+  }, [rawTorrents, hookDeleteTorrent]);
 
   return (
     <TorrentContext.Provider
       value={{
-        torrents, setTorrents, loading,
+        torrents, loading,
         selected, setSelected, toggleSelect,
         addTorrent, pauseTorrent, resumeTorrent, pauseAll, pauseSelected,
         deleteTorrents, updateTorrentStatus, clearCompleted,
