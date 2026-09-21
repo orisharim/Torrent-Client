@@ -4,8 +4,8 @@ from typing import Optional
 import asyncio
 import fcntl
 import os
-from torrent_file import TorrentFile
-import peers.peer_protocol_encoder as protocol_encoder
+from Torrent.torrent_file import TorrentFile
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
@@ -79,6 +79,7 @@ class TorrentStorage:
 
         self.files = torrent_metadata.files_info
         self._build_file_offset_map()
+        asyncio.create_task(self.restore_pieces_from_disk())
 
     async def get_downloaded_pieces(self) -> set[int]:
         async with self._downloaded_pieces_lock:

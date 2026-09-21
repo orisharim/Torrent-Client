@@ -2,195 +2,138 @@
 import asyncio
 import random
 from dataclasses import dataclass
-from peers.peers_manager import PeersManager
+import peers_receiver
+from TorrentSession.peers.peers import Peers
 from port_forward import forward_port
 from port_forward import delete_port
-from torrent_downloader import TorrentDownloader
-from torrent_file import TorrentFile
-from torrent_storage import TorrentStorage
-import tracker
+from TorrentSession.torrent_session import TorrentSession
+from Torrent.torrent_file import TorrentFile
+from TorrentSession.torrent_storage import TorrentStorage
+import TorrentSession.tracker_client as tracker_client
+from torrent_settings import GlobalTorrentSettings, TorrentSettings
 
 LISTENING_PORT = 6881
-DEFAULT_CONTACTING_INTERVAL = 30
 
 peer_id = random.randbytes(20)
-@dataclass
-class TorrentState:
-    torrent: TorrentFile
-    tracker_url: str
-    downloader: TorrentDownloader
-    peers_manager: PeersManager
-    monitor_task: asyncio.Task | None = None
-    stopped: bool = False
-
-
-torrents: dict[str, TorrentState] = {}
+torrents: dict[str, TorrentSession] = {}
+global_settings = None
 gateway_service = None
 
-
-def _downloaded_bytes(torrent: TorrentFile, downloaded_pieces: set[int]) -> int:
-    return sum(torrent.get_piece_length(index) for index in downloaded_pieces)
-
-
-async def _get_peers_from_trackers(
-    torrent: TorrentFile,
-    event: tuple[str, int],
-    downloaded: int,
-    uploaded: int,
-    left: int,
-) -> tuple[int | None, list[tuple[str, int]], str | None]:
-    for tracker_url in torrent.trackers:
-        interval, peers = await tracker.get_peers(
-            tracker_url,
-            torrent.info_hash,
-            peer_id,
-            LISTENING_PORT,
-            event,
-            downloaded,
-            uploaded,
-            left,
-        )
-        if interval is not None:
-            return interval, peers, tracker_url
-    return None, [], None
-
-async def start_torrent_client():
+async def start_torrent_client(settings: GlobalTorrentSettings | None = None):
     global gateway_service
-    gateway_service = await forward_port(LISTENING_PORT, protocol="TCP", description="Torrent Client")
+    global global_settings
+    global_settings = settings or GlobalTorrentSettings()
 
-async def add_torrent(torrent_file_path: str, download_path: str) -> bool:
+    if global_settings.enable_receiving_peers:
+        if not await peers_receiver.start_listening(LISTENING_PORT):
+            raise RuntimeError("Could not start incoming peer listener")
+    try:
+        if global_settings.enable_port_forwarding and gateway_service is None:
+            gateway_service = await forward_port(
+                LISTENING_PORT,
+                protocol="TCP",
+                description="Torrent Client",
+            )
+    except Exception as exc:
+        print(f"Failed to set up port forwarding: {exc}")
+        gateway_service = None
+
+async def add_new_torrent(torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> bool:
     if torrent_file_path in torrents:
         return False
 
+    settings = settings or TorrentSettings()
+
+    session : TorrentSession = None
     try:
-        torrent = TorrentFile(torrent_file_path)
-    except Exception as e:
-        print(f"Error occurred while creating TorrentFile: {e}")
+        session = TorrentSession(peer_id, torrent_file_path, download_path, settings)
+        await session.find_peers()
+    except Exception as exc:
+        print(f"Failed to add torrent {torrent_file_path}: {exc}")
+        if session is not None:
+            await session.close_all()
         return False
 
-    torrent_storage = TorrentStorage(torrent, download_path)
-    await torrent_storage.restore_pieces_from_disk()
-    
-    downloaded_pieces = await torrent_storage.get_downloaded_pieces()
-    downloaded = _downloaded_bytes(torrent, downloaded_pieces)
-    uploaded = await torrent_storage.get_uploaded_bytes()
-    contacting_interval = 0
-    peers = []
-
-    print(f"Starting torrent: {torrent_file_path}")
-    if torrent_storage.is_complete():
-        contacting_interval, peers, tracker_url = await _get_peers_from_trackers(
-            torrent, tracker.COMPLETED, downloaded, uploaded, 0
-        )
-    else:
-        contacting_interval, peers, tracker_url = await _get_peers_from_trackers(
-            torrent, tracker.STARTED, downloaded, uploaded, torrent.length-downloaded
-        )
-
-    if contacting_interval is None or tracker_url is None:
-        print("Failed to get peers from tracker.")
-        return False
-
-    if contacting_interval == 0:
-        contacting_interval = DEFAULT_CONTACTING_INTERVAL 
-    
-
-    peers_manager = PeersManager(peers, torrent, peer_id, torrent_storage)
-    downloader = TorrentDownloader(peers_manager, torrent, torrent_storage)
-
-    if torrent_storage.is_complete():
-        await peers_manager.connect_to_peers()
-        await downloader.start_seeding()
-    else:
-        await downloader.start_downloads()
-    
-    initial_contacting_interval = contacting_interval or DEFAULT_CONTACTING_INTERVAL
-
-    async def monitor_torrent():
+    if global_settings.enable_receiving_peers:
         try:
-            interval = initial_contacting_interval
-            await asyncio.sleep(interval)
-            while not await downloader.is_complete():
-                downloaded_pieces = await torrent_storage.get_downloaded_pieces()
-                downloaded = _downloaded_bytes(torrent, downloaded_pieces)
-                uploaded = await torrent_storage.get_uploaded_bytes()
-                interval, peers = await tracker.get_peers(
-                    state.tracker_url, torrent.info_hash, peer_id, LISTENING_PORT,
-                    tracker.KEEP_ALIVE, downloaded, uploaded,
-                    torrent.length-downloaded,
-                )
-                if interval is not None:
-                    await peers_manager.update_peers(peers)
-                await asyncio.sleep(interval or DEFAULT_CONTACTING_INTERVAL)
+            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.get_peers())
+        except Exception as exc:
+            print(f"Failed to enable receiving peers server for {torrent_file_path}: {exc}")
+            await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
+            return False
 
-            downloaded_pieces = await torrent_storage.get_downloaded_pieces()
-            downloaded = _downloaded_bytes(torrent, downloaded_pieces)
-            uploaded = await torrent_storage.get_uploaded_bytes()
-            interval, peers = await tracker.get_peers(
-                state.tracker_url, torrent.info_hash, peer_id, LISTENING_PORT,
-                tracker.COMPLETED, downloaded, uploaded, 0,
-            )
-            if interval is not None:
-                await peers_manager.update_peers(peers)
+    torrents[torrent_file_path] = session
+    return True
 
-            while not state.stopped:
-                await asyncio.sleep(interval or DEFAULT_CONTACTING_INTERVAL)
-                downloaded_pieces = await torrent_storage.get_downloaded_pieces()
-                downloaded = _downloaded_bytes(torrent, downloaded_pieces)
-                uploaded = await torrent_storage.get_uploaded_bytes()
-                interval, peers = await tracker.get_peers(
-                    state.tracker_url, torrent.info_hash, peer_id, LISTENING_PORT,
-                    tracker.KEEP_ALIVE, downloaded, uploaded,
-                    torrent.length-downloaded,
-                )
-                if interval is not None:
-                    await peers_manager.update_peers(peers)
-        except asyncio.CancelledError:
-            raise
-        finally:
-            if torrents.get(torrent_file_path) is state:
-                del torrents[torrent_file_path]
+async def change_torrent_settings(torrent_file_path: str, settings: TorrentSettings) -> bool:
+    session = torrents.get(torrent_file_path)
+    if session is None:
+        return False
+    session.change_settings(settings)
+    return True
 
-    state = TorrentState(torrent, tracker_url, downloader, peers_manager)
-    state.monitor_task = asyncio.create_task(monitor_torrent())
-    torrents[torrent_file_path] = state
+async def change_torrent_status(torrent_file_path: str, is_downloading: bool, is_seeding: bool) -> bool:
+    session = torrents.get(torrent_file_path)
+    if session is None:
+        return False
 
+    session.session.change_status(is_downloading, is_seeding)
 
     return True
 
+async def change_global_settings(settings: GlobalTorrentSettings) -> None:
+    global global_settings, gateway_service
+    
+    if settings.enable_port_forwarding and not global_settings.enable_port_forwarding:
+        try:
+            gateway_service = await forward_port(
+                LISTENING_PORT,
+                protocol="TCP",
+                description="Torrent Client",
+            )
+        except Exception as exc:
+            print(f"Failed to set up port forwarding: {exc}")
+            gateway_service = None
 
-async def stop_torrent(torrent_file_path: str):
-    state = torrents.get(torrent_file_path)
-    if state is None:
-        return
-
-    state.stopped = True
-    current_task = asyncio.current_task()
-    if state.monitor_task is not None and state.monitor_task is not current_task:
-        state.monitor_task.cancel()
-        await asyncio.gather(state.monitor_task, return_exceptions=True)
-    await tracker.contact_tracker(
-        state.tracker_url,
-        state.torrent.info_hash,
-        peer_id,
-        LISTENING_PORT,
-        tracker.STOPPED,
-        0,
-        0,
-        0,
-    )
-    await state.downloader.close_all()
-    if state.peers_manager._server is not None:
-        await state.peers_manager.stop_listening()
-    torrents.pop(torrent_file_path, None)
-
-
-async def stop_torrent_client():
-    for torrent_file_path in list(torrents.keys()):
-        await stop_torrent(torrent_file_path)
-
-    global gateway_service
-    if gateway_service:
+    elif not settings.enable_port_forwarding and global_settings.enable_port_forwarding:
         await delete_port(gateway_service, LISTENING_PORT)
         gateway_service = None
-    
+
+    if  settings.enable_receiving_peers and not global_settings.enable_receiving_peers:
+        if not await peers_receiver.start_listening(LISTENING_PORT):
+            raise RuntimeError("Could not start incoming peer listener")
+
+        for session in torrents.values():
+            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.get_peers())
+    elif not settings.enable_receiving_peers and global_settings.enable_receiving_peers:
+        await peers_receiver.stop_listening()
+
+    global_settings = settings
+
+async def remove_torrent(torrent_file_path: str) -> bool:
+    session = torrents.pop(torrent_file_path, None)
+    if session is None:
+        return False
+    await session.close_all()
+    if global_settings.enable_receiving_peers:
+        await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
+    return True
+
+async def stop_torrent_client():
+    for torrent_file_path in list(torrents):
+        await remove_torrent(torrent_file_path)
+    await peers_receiver.stop_listening()
+
+    global gateway_service
+    if gateway_service is not None:
+        await delete_port(gateway_service, LISTENING_PORT)
+        gateway_service = None
+
+async def get_torrent(torrent_file_path: str) -> TorrentSession | None:
+    return torrents.get(torrent_file_path)
+
+async def get_torrent_status(torrent_file_path: str) -> dict | None:
+    session = torrents.get(torrent_file_path)
+    if session is None:
+        return None
+    return await session.get_status()
