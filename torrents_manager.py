@@ -38,6 +38,10 @@ async def start_torrent_client(settings: GlobalTorrentSettings | None = None):
         print(f"Failed to set up port forwarding: {exc}")
         gateway_service = None
 
+async def get_torrents() -> list[str]:
+    return list(torrents.keys())
+
+
 async def add_new_torrent(torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> bool:
     if torrent_file_path in torrents:
         return False
@@ -62,18 +66,30 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
             await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
             return False
 
-    torrents[torrent_file_path] = session
+    torrents[download_path] = session
     return True
 
-async def change_torrent_settings(torrent_file_path: str, settings: TorrentSettings) -> bool:
-    session = torrents.get(torrent_file_path)
+async def get_torrent_settings(torrent_download_path: str) -> TorrentSettings | None:
+    session = torrents.get(torrent_download_path)
+    if session is None:
+        return None
+    return session.get_settings()
+
+async def change_torrent_settings(torrent_download_path: str, settings: TorrentSettings) -> bool:
+    session = torrents.get(torrent_download_path)
     if session is None:
         return False
     session.change_settings(settings)
     return True
 
-async def change_torrent_status(torrent_file_path: str, is_downloading: bool, is_seeding: bool) -> bool:
-    session = torrents.get(torrent_file_path)
+async def get_torrent_status(torrent_download_path: str) -> dict | None:
+    session = torrents.get(torrent_download_path)
+    if session is None:
+        return None
+    return await session.get_status()
+
+async def change_torrent_status(torrent_download_path: str, is_downloading: bool, is_seeding: bool) -> bool:
+    session = torrents.get(torrent_download_path)
     if session is None:
         return False
 
@@ -110,8 +126,8 @@ async def change_global_settings(settings: GlobalTorrentSettings) -> None:
 
     global_settings = settings
 
-async def remove_torrent(torrent_file_path: str) -> bool:
-    session = torrents.pop(torrent_file_path, None)
+async def remove_torrent(torrent_download_path: str) -> bool:
+    session = torrents.pop(torrent_download_path, None)
     if session is None:
         return False
     await session.close_all()
@@ -120,8 +136,8 @@ async def remove_torrent(torrent_file_path: str) -> bool:
     return True
 
 async def stop_torrent_client():
-    for torrent_file_path in list(torrents):
-        await remove_torrent(torrent_file_path)
+    for torrent_download_path in list(torrents):
+        await remove_torrent(torrent_download_path)
     await peers_receiver.stop_listening()
 
     global gateway_service
@@ -129,11 +145,6 @@ async def stop_torrent_client():
         await delete_port(gateway_service, LISTENING_PORT)
         gateway_service = None
 
-async def get_torrent(torrent_file_path: str) -> TorrentSession | None:
-    return torrents.get(torrent_file_path)
+async def get_torrent(torrent_download_path: str) -> TorrentSession | None:
+    return torrents.get(torrent_download_path)
 
-async def get_torrent_status(torrent_file_path: str) -> dict | None:
-    session = torrents.get(torrent_file_path)
-    if session is None:
-        return None
-    return await session.get_status()

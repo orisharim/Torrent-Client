@@ -1,5 +1,7 @@
 from attr import dataclass
 
+
+
 @dataclass
 class TorrentSettings:
     max_connections: int = 50 # 0 means unlimited
