@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AppSettings } from "../services/types";
-
-// TODO put real url (temp)
-const URL = "http://localhost:8080";
+import { BASE_URL } from "../services/backend";
 
 export const DEFAULT_SETTINGS: AppSettings = {
     max_connection: 50,
@@ -16,9 +14,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
-// TODO put real url (temp) — path unconfirmed, guessing "/settings" to match the /torrents convention
+// path unconfirmed, guessing "/settings" to match the /torrents convention
 const getSettings = async (): Promise<AppSettings> => {
-    const response = await fetch(`${URL}/settings`, {
+    const response = await fetch(`${BASE_URL}/settings`, {
         method: "GET",
         headers: jsonHeaders,
     });
@@ -28,7 +26,7 @@ const getSettings = async (): Promise<AppSettings> => {
 
 // contract from teammate: POST {settingsName, value} — one field per call
 const postSetting = async <K extends keyof AppSettings>(settingsName: K, value: AppSettings[K]): Promise<boolean> => {
-    const response = await fetch(`${URL}/settings`, {
+    const response = await fetch(`${BASE_URL}/settings`, {
         method: "POST",
         headers: jsonHeaders,
         body: JSON.stringify({ settingsName, value }),

@@ -1,20 +1,2 @@
-/**
- * Await `promise`; return `fallback()` if it rejects (no Tauri runtime) or if it
- * resolves to an empty array (backend stub returning nothing yet).
- */
-export const withFallback = async <T>(promise: Promise<T>, fallback: () => T): Promise<T> => {
-  try {
-    const result = await promise;
-    if (Array.isArray(result) && result.length === 0) return fallback();
-    return result;
-  } catch (error) {
-    console.warn("[backend unavailable — using demo fallback]", error);
-    return fallback();
-  }
-};
-
-/** Fire-and-forget mutation: never let a missing backend surface as an unhandled rejection. */
-export const safeCall = (promise: Promise<unknown>): Promise<void> =>
-  promise.then(() => undefined).catch((error) => {
-    console.warn("[backend unavailable]", error);
-  });
+// Vite only exposes env vars prefixed with VITE_ to client code — see .env / .env.example
+export const BASE_URL = (import.meta.env.VITE_APP_BASE_URL as string).replace(/\/$/, "");

@@ -1,7 +1,5 @@
 import {useEffect, useRef, useState} from "react";
-
-//TODO put real url (temp)
-const URL = "http://localhost:8080";
+import { BASE_URL } from "../services/backend";
 
 const POLL_INTERVAL_MS = 500;
 
@@ -23,9 +21,8 @@ const parseJson = async <T>(response : Response) : Promise<T> => {
     return response.json();
 }
 
-//TODO put real url (temp)
 const getAllTorrentPaths = async() : Promise<string[]> => {
-    const response = await fetch(`${URL}/torrents` , {
+    const response = await fetch(`${BASE_URL}/torrents` , {
         method : "GET",
         headers : jsonHeaders
     });
@@ -33,9 +30,8 @@ const getAllTorrentPaths = async() : Promise<string[]> => {
     return list.map((t) => t.torrentFilePath);
 }
 
-//TODO put real url (temp)
 const getTorrentStatus = async(torrentFilePath : string) : Promise<Torrent> => {
-    const response = await fetch(`${URL}/torrents/status?${new URLSearchParams({torrentFilePath})}` , {
+    const response = await fetch(`${BASE_URL}/torrents/status?${new URLSearchParams({torrentFilePath})}` , {
         method : "GET",
         headers : jsonHeaders
     });
@@ -48,9 +44,8 @@ const getAllTorrents = async() : Promise<Torrent[]> => {
     return Promise.all(paths.map((path) => getTorrentStatus(path)));
 }
 
-//TODO put real url (temp)
 const postAddTorrent = async(torrentFilePath : string, downloadPath : string) : Promise<boolean> => {
-    const response = await fetch(`${URL}/torrents/add` , {
+    const response = await fetch(`${BASE_URL}/torrents/add` , {
         method : "POST",
         headers : jsonHeaders,
         body : JSON.stringify({torrentFilePath , downloadPath})
@@ -59,9 +54,8 @@ const postAddTorrent = async(torrentFilePath : string, downloadPath : string) : 
 }
 
 // assumes "id" == torrentFilePath, the only identifier the status endpoints use
-//TODO put real url (temp)
 const postPauseTorrent = async(torrentFilePath : string) : Promise<boolean> => {
-    const response = await fetch(`${URL}/torrents/pause` , {
+    const response = await fetch(`${BASE_URL}/torrents/pause` , {
         method : "POST",
         headers : jsonHeaders,
         body : JSON.stringify({id : torrentFilePath})
@@ -69,9 +63,8 @@ const postPauseTorrent = async(torrentFilePath : string) : Promise<boolean> => {
     return response.ok;
 }
 
-//TODO put real url (temp)
 const postResumeTorrent = async(torrentFilePath : string) : Promise<boolean> => {
-    const response = await fetch(`${URL}/torrents/resume` , {
+    const response = await fetch(`${BASE_URL}/torrents/resume` , {
         method : "POST",
         headers : jsonHeaders,
         body : JSON.stringify({id : torrentFilePath})
@@ -79,9 +72,8 @@ const postResumeTorrent = async(torrentFilePath : string) : Promise<boolean> => 
     return response.ok;
 }
 
-//TODO put real url (temp)
 const postDeleteTorrent = async(torrentFilePath : string) : Promise<boolean> => {
-    const response = await fetch(`${URL}/torrents/delete` , {
+    const response = await fetch(`${BASE_URL}/torrents/delete` , {
         method : "POST",
         headers : jsonHeaders,
         body : JSON.stringify({id : torrentFilePath})
@@ -89,9 +81,8 @@ const postDeleteTorrent = async(torrentFilePath : string) : Promise<boolean> => 
     return response.ok;
 }
 
-//TODO put real url (temp)
 const changeTorrentStatus = async(torrentFilePath : string, is_downloading : boolean, is_seeding : boolean) : Promise<boolean> => {
-    const response = await fetch(`${URL}/torrents/change-status` , {
+    const response = await fetch(`${BASE_URL}/torrents/change-status` , {
         method : "POST",
         headers : jsonHeaders,
         body : JSON.stringify({torrentFilePath , is_downloading , is_seeding})
