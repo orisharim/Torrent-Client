@@ -37,14 +37,15 @@ export type SearchResult = {
   magnet: string;
 };
 
+// field names match the real backend contract (confirmed against src/hooks/useSettings.ts, not guessed)
 export type AppSettings = {
-  maxConnections: number; // 0 means unlimited
-  downloadSpeedLimit: number; // MB/s, 0 means no limit
-  uploadSpeedLimit: number; // MB/s, 0 means no limit
-  trackerAmount: number; // amount of trackers to contact at once, 0 means all
-  enableReceivingPeers: boolean;
-  enableDht: boolean;
-  enablePortForwarding: boolean;
+  max_connection: number; // 0 means unlimited
+  download_speed: number; // MB/s, 0 means no limit
+  upload_speed_limit: number; // MB/s, 0 means no limit
+  tracker_amount: number; // amount of trackers to contact at once, 0 means all
+  enable_receiving: boolean;
+  enable_dht: boolean;
+  enable_port_downloading: boolean;
 };
 
 export type HomeStats = {

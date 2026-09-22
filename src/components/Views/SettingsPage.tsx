@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Settings as SettingsIcon, X } from "lucide-react";
 import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
 import Button from "../UI/Button";
 import Modal from "../UI/Modal";
 import Toggle from "../UI/Toggle";
-import * as settingsService from "../../services/settingsService";
+import { useSettings, DEFAULT_SETTINGS } from "../../hooks/useSettings";
 import type { AppSettings } from "../../services/types";
 
 const Row = ({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) => (
@@ -33,19 +33,23 @@ type SettingsPageProps = {
 
 export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const { showToast } = useUI();
-  const [settings, setSettings] = useState<AppSettings>(settingsService.DEFAULT_SETTINGS);
+  const { settings: liveSettings, saveSettings, resetSettings } = useSettings();
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    settingsService.getSettings().then(setSettings);
-  }, []);
+  // adopt the server-loaded settings as the editable draft once, when they first arrive
+  const [prevLiveSettings, setPrevLiveSettings] = useState(liveSettings);
+  if (prevLiveSettings !== liveSettings) {
+    setPrevLiveSettings(liveSettings);
+    setSettings(liveSettings);
+  }
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = () => {
-    settingsService.saveSettings(settings); // REPLACE: await + error handling
+    saveSettings(settings); // REPLACE: await + error handling
     setSaved(true);
     showToast("Settings saved");
     setTimeout(() => { setSaved(false); onClose(); }, 1200);
@@ -53,7 +57,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   const handleReset = () => {
     if (confirm("Reset all settings to defaults?")) {
-      settingsService.resetSettings().then(setSettings);
+      resetSettings().then(setSettings);
     }
   };
 
@@ -83,8 +87,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
               <input
                 type="number"
                 min={0}
-                value={settings.maxConnections}
-                onChange={(e) => update("maxConnections", Number(e.target.value))}
+                value={settings.max_connection}
+                onChange={(e) => update("max_connection", Number(e.target.value))}
                 className={`w-20 text-end ${inputCls}`}
               />
             </Row>
@@ -92,19 +96,19 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
               <input
                 type="number"
                 min={0}
-                value={settings.trackerAmount}
-                onChange={(e) => update("trackerAmount", Number(e.target.value))}
+                value={settings.tracker_amount}
+                onChange={(e) => update("tracker_amount", Number(e.target.value))}
                 className={`w-20 text-end ${inputCls}`}
               />
             </Row>
             <Row label="Enable receiving peers">
-              <Toggle checked={settings.enableReceivingPeers} onChange={(v) => update("enableReceivingPeers", v)} />
+              <Toggle checked={settings.enable_receiving} onChange={(v) => update("enable_receiving", v)} />
             </Row>
             <Row label="Enable DHT" sub="Distributed hash table for trackerless torrents">
-              <Toggle checked={settings.enableDht} onChange={(v) => update("enableDht", v)} />
+              <Toggle checked={settings.enable_dht} onChange={(v) => update("enable_dht", v)} />
             </Row>
             <Row label="Enable port forwarding">
-              <Toggle checked={settings.enablePortForwarding} onChange={(v) => update("enablePortForwarding", v)} />
+              <Toggle checked={settings.enable_port_downloading} onChange={(v) => update("enable_port_downloading", v)} />
             </Row>
           </Section>
 
@@ -115,8 +119,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   type="number"
                   min={0}
                   step={0.1}
-                  value={settings.downloadSpeedLimit}
-                  onChange={(e) => update("downloadSpeedLimit", Number(e.target.value))}
+                  value={settings.download_speed}
+                  onChange={(e) => update("download_speed", Number(e.target.value))}
                   className={`w-20 text-end ${inputCls}`}
                 />
                 <span className="text-xs text-stone-400 dark:text-stone-500">MB/s</span>
@@ -128,8 +132,8 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   type="number"
                   min={0}
                   step={0.1}
-                  value={settings.uploadSpeedLimit}
-                  onChange={(e) => update("uploadSpeedLimit", Number(e.target.value))}
+                  value={settings.upload_speed_limit}
+                  onChange={(e) => update("upload_speed_limit", Number(e.target.value))}
                   className={`w-20 text-end ${inputCls}`}
                 />
                 <span className="text-xs text-stone-400 dark:text-stone-500">MB/s</span>
