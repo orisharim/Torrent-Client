@@ -1,7 +1,3 @@
-// REPLACE: remove the fallback path once a real torrent engine backs these commands.
-// While the backend commands are stubs (or the app runs in a plain browser without
-// Tauri), getters fall back to demo data so the UI stays usable and testable.
-
 /**
  * Await `promise`; return `fallback()` if it rejects (no Tauri runtime) or if it
  * resolves to an empty array (backend stub returning nothing yet).
