@@ -1,32 +1,5 @@
 export type TorrentStatus = "Downloading" | "Paused" | "Completed" | "Seeding";
 
-export type Torrent = {
-  id: number;
-  name: string;
-  size: number;
-  progress: number;
-  speed: number;
-  status: TorrentStatus;
-};
-
-export type TorrentDetail = {
-  id: number;
-  files: string;
-  info: string;
-  peers: string;
-  trackers: string;
-  speed: string;
-};
-
-export type TorrentPageStats = {
-  totalPeers: number;
-  currentSpeed: string;
-};
-
-export type AddTorrentPayload =
-  | { type: "magnet"; uri: string }
-  | { type: "file"; fileName: string };
-
 export type SearchResult = {
   id: number;
   name: string;
@@ -46,11 +19,4 @@ export type AppSettings = {
   enable_receiving: boolean;
   enable_dht: boolean;
   enable_port_downloading: boolean;
-};
-
-export type HomeStats = {
-  downloadSpeed: string;
-  uploadSpeed: string;
-  activeTorrents: number;
-  seedingTorrents: number;
 };

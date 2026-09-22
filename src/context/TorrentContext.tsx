@@ -9,6 +9,7 @@ export type Torrent = {
   progress: number; // 0-100
   speed: number; // MB/s
   status: TorrentStatus;
+  peers: number;
 };
 
 type TorrentContextType = {
@@ -72,6 +73,7 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
     progress: t.total_pieces > 0 ? (t.downloaded_pieces / t.total_pieces) * 100 : 0,
     speed: t.download_speed,
     status: deriveStatus(t),
+    peers: t.connected_peers,
   })), [rawTorrents]);
 
   const toggleSelect = useCallback((id: string) => {
