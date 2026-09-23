@@ -1,6 +1,7 @@
 import torrents_manager
 import asyncio
 import threading
+from urllib.parse import unquote
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flasgger import Swagger
@@ -56,11 +57,11 @@ Swagger(app, template={
                 }
             }
         },
-        "/api/torrents/{torrent_download_path}": {
+        "/api/torrents/{info_hash}/{download_path}": {
             "get": {
                 "tags": ["Torrents"],
                 "summary": "Get torrent status",
-                "parameters": [{"$ref": "#/parameters/TorrentDownloadPath"}],
+                "parameters": [{"$ref": "#/parameters/InfoHash"}, {"$ref": "#/parameters/DownloadPath"}],
                 "responses": {
                     "200": {"description": "Torrent status"},
                     "404": {"description": "Torrent not found"}
@@ -69,7 +70,7 @@ Swagger(app, template={
             "delete": {
                 "tags": ["Torrents"],
                 "summary": "Delete a torrent",
-                "parameters": [{"$ref": "#/parameters/TorrentDownloadPath"}],
+                "parameters": [{"$ref": "#/parameters/InfoHash"}, {"$ref": "#/parameters/DownloadPath"}],
                 "responses": {
                     "200": {"description": "Torrent deleted"},
                     "404": {"description": "Torrent not found"},
@@ -77,11 +78,11 @@ Swagger(app, template={
                 }
             }
         },
-        "/api/torrents/status/{torrent_download_path}": {
+        "/api/torrents/status/{info_hash}/{download_path}": {
             "get": {
                 "tags": ["Torrents"],
                 "summary": "Get torrent status",
-                "parameters": [{"$ref": "#/parameters/TorrentDownloadPath"}],
+                "parameters": [{"$ref": "#/parameters/InfoHash"}, {"$ref": "#/parameters/DownloadPath"}],
                 "responses": {
                     "200": {"description": "Torrent status"},
                     "404": {"description": "Torrent not found"}
@@ -91,7 +92,8 @@ Swagger(app, template={
                 "tags": ["Torrents"],
                 "summary": "Change torrent status",
                 "parameters": [
-                    {"$ref": "#/parameters/TorrentDownloadPath"},
+                    {"$ref": "#/parameters/InfoHash"},
+                    {"$ref": "#/parameters/DownloadPath"},
                     {"$ref": "#/parameters/TorrentStatus"}
                 ],
                 "responses": {
@@ -102,11 +104,11 @@ Swagger(app, template={
                 }
             }
         },
-        "/api/torrents/settings/{torrent_download_path}": {
+        "/api/torrents/settings/{info_hash}/{download_path}": {
             "get": {
                 "tags": ["Torrent settings"],
                 "summary": "Get torrent settings",
-                "parameters": [{"$ref": "#/parameters/TorrentDownloadPath"}],
+                "parameters": [{"$ref": "#/parameters/InfoHash"}, {"$ref": "#/parameters/DownloadPath"}],
                 "responses": {
                     "200": {"description": "Torrent settings"},
                     "404": {"description": "Torrent not found"}
@@ -116,7 +118,8 @@ Swagger(app, template={
                 "tags": ["Torrent settings"],
                 "summary": "Change torrent settings",
                 "parameters": [
-                    {"$ref": "#/parameters/TorrentDownloadPath"},
+                    {"$ref": "#/parameters/InfoHash"},
+                    {"$ref": "#/parameters/DownloadPath"},
                     {"$ref": "#/parameters/TorrentSettings"}
                 ],
                 "responses": {
@@ -149,8 +152,14 @@ Swagger(app, template={
         }
     },
     "parameters": {
-        "TorrentDownloadPath": {
-            "name": "torrent_download_path",
+        "InfoHash": {
+            "name": "info_hash",
+            "in": "path",
+            "required": True,
+            "type": "string"
+        },
+        "DownloadPath": {
+            "name": "download_path",
             "in": "path",
             "required": True,
             "type": "string"
@@ -211,6 +220,8 @@ Swagger(app, template={
 })
 
 class AsyncRunner:
+    #we generate and run a new even loop in a separate thread so we can run async 
+    # functions inside of it while the main thread is running the flask server
     def __init__(self):
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
@@ -239,6 +250,8 @@ def run_manager(operation):
         client_started = True
     return async_runner.run(operation())
 
+
+#http status codes
 OK = 200 
 CREATED = 201 
 NO_CONTENT = 204
@@ -256,6 +269,7 @@ def _get_json_object():
     if not isinstance(payload, dict) or not payload:
         return None, "Request body must be a non-empty JSON object"
     return payload, None
+
 
 
 def _validate_torrent_settings(payload):
@@ -321,6 +335,22 @@ def _validate_path_field(payload, field):
         return f"{field} must be a non-empty string"
     return None
 
+
+def _normalize_download_path(download_path):
+    download_path = unquote(download_path)
+    if len(download_path) >= 2 and download_path[0] == download_path[-1] == '"':
+        download_path = download_path[1:-1]
+    return download_path
+
+def _parse_torrent_key(info_hash, download_path):
+    try:
+        info_hash_bytes = bytes.fromhex(info_hash)
+    except ValueError:
+        return None
+    if len(info_hash_bytes) != 20:
+        return None
+    return info_hash_bytes, _normalize_download_path(download_path)
+
 @app.route('/api/torrents', methods=['GET'])
 def get_torrents():
     """List all torrents.
@@ -339,9 +369,9 @@ def get_torrents():
     }
     return jsonify(data), OK
 
-@app.route('/api/torrents/<string:torrent_download_path>', methods=['GET'])
-@app.route('/api/torrents/status/<string:torrent_download_path>', methods=['GET'])
-def get_torrent_status(torrent_download_path):
+@app.route('/api/torrents/<string:info_hash>/<path:download_path>', methods=['GET'])
+@app.route('/api/torrents/status/<string:info_hash>/<path:download_path>', methods=['GET'])
+def get_torrent_status(info_hash, download_path):
     """Get the status of a torrent.
         tags:
             - Torrents
@@ -356,8 +386,11 @@ def get_torrent_status(torrent_download_path):
             404:
                 description: Torrent not found.
     """
+    torrent_key = _parse_torrent_key(info_hash, download_path)
+    if torrent_key is None:
+        return jsonify({"message_status": "error", "message": "Invalid info hash"}), BAD_REQUEST
     timestamp = time.time()
-    torrent_status = run_manager(lambda: torrents_manager.get_torrent_status(torrent_download_path))
+    torrent_status = run_manager(lambda: torrents_manager.get_torrent_status(*torrent_key))
     
     if torrent_status is None:
         return jsonify({"message_status": "error", "timestamp": timestamp}), NOT_FOUND
@@ -368,8 +401,8 @@ def get_torrent_status(torrent_download_path):
     }
     return jsonify({**data, **torrent_status}), OK
 
-@app.route('/api/torrents/settings/<string:torrent_download_path>', methods=['GET'])
-def get_torrent_settings(torrent_download_path):
+@app.route('/api/torrents/settings/<string:info_hash>/<path:download_path>', methods=['GET'])
+def get_torrent_settings(info_hash, download_path):
     """Get settings for a torrent.
         tags:
             - Torrent settings
@@ -384,8 +417,11 @@ def get_torrent_settings(torrent_download_path):
             404:
                 description: Torrent not found.
     """
+    torrent_key = _parse_torrent_key(info_hash, download_path)
+    if torrent_key is None:
+        return jsonify({"message_status": "error", "message": "Invalid info hash"}), BAD_REQUEST
     timestamp = time.time()
-    torrent_status = run_manager(lambda: torrents_manager.get_torrent_settings(torrent_download_path))
+    torrent_status = run_manager(lambda: torrents_manager.get_torrent_settings(*torrent_key))
     
     if torrent_status is None:
         return jsonify({"message_status": "error", "timestamp": timestamp}), NOT_FOUND
@@ -463,8 +499,15 @@ def add_new_torrent():
     if "tracker_amount" in user_input:
         torrent_settings.tracker_amount = user_input["tracker_amount"]
 
-    if run_manager(lambda: torrents_manager.get_torrent(user_input["download_path"])) is not None:
+    try:
+        info_hash = torrents_manager.TorrentFile(user_input["file_path"]).info_hash
+    except (OSError, ValueError, KeyError, TypeError):
+        info_hash = None
+    if info_hash is not None and run_manager(lambda: torrents_manager.get_torrent(
+        info_hash, user_input["download_path"]
+    )) is not None:
         return jsonify({"status": "error", "message": "Torrent already exists"}), CONFLICT
+
     if not run_manager(lambda: torrents_manager.add_new_torrent(
         user_input["file_path"], user_input["download_path"], torrent_settings
     )):
@@ -474,8 +517,8 @@ def add_new_torrent():
         "status": "received", 
     }), OK
 
-@app.route('/api/torrents/settings/<string:torrent_download_path>', methods=['PUT'])
-def change_torrent_settings(torrent_download_path):
+@app.route('/api/torrents/settings/<string:info_hash>/<path:download_path>', methods=['PUT'])
+def change_torrent_settings(info_hash, download_path):
     """Change settings for a torrent.
         tags:
             - Torrent settings
@@ -504,6 +547,9 @@ def change_torrent_settings(torrent_download_path):
             400:
                 description: Invalid request body.
     """
+    torrent_key = _parse_torrent_key(info_hash, download_path)
+    if torrent_key is None:
+        return jsonify({"message_status": "error", "message": "Invalid info hash"}), BAD_REQUEST
     user_input, validation_error = _get_json_object()
     if validation_error:
         return jsonify({"status": "error", "message": validation_error}), BAD_REQUEST
@@ -522,7 +568,7 @@ def change_torrent_settings(torrent_download_path):
         torrent_settings.tracker_amount = user_input["tracker_amount"]
 
     if not run_manager(lambda: torrents_manager.change_torrent_settings(
-        torrent_download_path, torrent_settings
+        *torrent_key, torrent_settings
     )):
         return jsonify({"status": "error", "message": "Failed to change torrent settings"}), GENERAL_ERROR    
     # Send a response back confirming receipt
@@ -530,8 +576,8 @@ def change_torrent_settings(torrent_download_path):
         "status": "received", 
     }), OK
 
-@app.route('/api/torrents/status/<string:torrent_download_path>', methods=['PUT'])
-def change_torrent_status(torrent_download_path):
+@app.route('/api/torrents/status/<string:info_hash>/<path:download_path>', methods=['PUT'])
+def change_torrent_status(info_hash, download_path):
     """Change the downloading and seeding status of a torrent.
         tags:
             - Torrents
@@ -559,6 +605,9 @@ def change_torrent_status(torrent_download_path):
             400:
                 description: Invalid request body.
     """
+    torrent_key = _parse_torrent_key(info_hash, download_path)
+    if torrent_key is None:
+        return jsonify({"message_status": "error", "message": "Invalid info hash"}), BAD_REQUEST
     user_input, validation_error = _get_json_object()
     if validation_error:
         return jsonify({"status": "error", "message": validation_error}), BAD_REQUEST
@@ -567,7 +616,7 @@ def change_torrent_status(torrent_download_path):
         return jsonify({"status": "error", "message": validation_error}), BAD_REQUEST
 
     if not run_manager(lambda: torrents_manager.change_torrent_status(
-        torrent_download_path, user_input["is_downloading"], user_input["is_seeding"]
+        *torrent_key, user_input["is_downloading"], user_input["is_seeding"]
     )):
         return jsonify({"status": "error", "message": "Failed to change torrent status"}), GENERAL_ERROR    
     # Send a response back confirming receipt
@@ -575,8 +624,8 @@ def change_torrent_status(torrent_download_path):
         "status": "received", 
     }), OK
 
-@app.route('/api/torrents/<string:torrent_download_path>', methods=['DELETE'])
-def delete_torrent(torrent_download_path):
+@app.route('/api/torrents/<string:info_hash>/<path:download_path>', methods=['DELETE'])
+def delete_torrent(info_hash, download_path):
     """Delete a torrent.
         tags:
             - Torrents
@@ -591,7 +640,10 @@ def delete_torrent(torrent_download_path):
             500:
                 description: Torrent could not be deleted.
     """
-    if not run_manager(lambda: torrents_manager.remove_torrent(torrent_download_path)):
+    torrent_key = _parse_torrent_key(info_hash, download_path)
+    if torrent_key is None:
+        return jsonify({"message_status": "error", "message": "Invalid info hash"}), BAD_REQUEST
+    if not run_manager(lambda: torrents_manager.remove_torrent(*torrent_key)):
         return jsonify({"status": "error", "message": "Failed to delete torrent"}), GENERAL_ERROR    
     # Send a response back confirming receipt
     return jsonify({
