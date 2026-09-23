@@ -1,8 +1,11 @@
 bitstring
 aiohttp
+Flask
+flask-cors
 loguru
 pytest
 pytest-asyncio
 bencode.py
 requests
 miniupnpc
+flasgger
