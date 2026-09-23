@@ -8,15 +8,16 @@ async def main():
 
     torrent_file_path = "/home/ori/Desktop/torrentsfortest/ubuntu-26.04.1-desktop-amd64.iso.torrent"
     download_path = "/home/ori/Desktop/ubuntu"
+    info_hash = torrents_manager.TorrentFile(torrent_file_path).info_hash
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)
-        await torrents_manager.change_torrent_status(torrent_file_path, is_downloading=False, is_seeding=True)
+        await torrents_manager.change_torrent_status(info_hash, download_path, is_downloading=False, is_seeding=True)
         print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
 
         if res:
             while True:
-                print("status: ", await torrents_manager.get_torrent_status(torrent_file_path))
+                print("status: ", await torrents_manager.get_torrent_status(info_hash, download_path))
                 await asyncio.sleep(5)
 
         else:

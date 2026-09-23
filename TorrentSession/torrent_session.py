@@ -377,11 +377,9 @@ class TorrentSession:
         return protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index)
 
     async def get_status(self) -> dict:
-        timestamp = time.monotonic()
         downloaded_piece_count = self.get_downloaded_piece_count()
         total_pieces = len(self._torrent_metadata.pieces)
         return {
-            "timestamp": timestamp,
             "download_speed" : self._current_download_speed,
             "downloaded_pieces": downloaded_piece_count,
             "total_pieces": total_pieces,
