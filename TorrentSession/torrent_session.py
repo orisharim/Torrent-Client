@@ -75,7 +75,7 @@ class TorrentSession:
         await self._stop_trackers()
         await self._peers.close_connections()
 
-    async def find_peers(self):
+    async def _retrieve_peers(self):
         await self._start_trackers()
         await self._peers.connect_to_peers()
     
@@ -85,7 +85,7 @@ class TorrentSession:
         await self._torrent_storage.restore_pieces_from_disk()
 
         if self._peers.has_connected_peers() is False:
-            await self.find_peers()    
+            await self.retrieve_peers()    
         
         self._is_downloading = True
         self._validation_task = asyncio.create_task(self._validate_pieces())
@@ -401,12 +401,22 @@ class TorrentSession:
             else:
                 await self.stop_seeding()
 
-    #TODO
     async def change_settings(self, torrent_settings: TorrentSettings) -> None:
-        pass
+        if torrent_settings.max_connections != self._torrent_settings.max_connections:
+            await self._peers.change_max_connections(torrent_settings.max_connections)
+        if torrent_settings.download_speed_limit != self._torrent_settings.download_speed_limit:
+            pass
+        if torrent_settings.upload_speed_limit != self._torrent_settings.upload_speed_limit:
+            pass
+        if torrent_settings.tracker_amount != self._torrent_settings.tracker_amount:
+            await self._stop_trackers()
+            self._torrent_settings.tracker_amount = torrent_settings.tracker_amount
+            await self._start_trackers()
+        self._torrent_settings = torrent_settings
+        
 
     def get_torrent_metadata(self) -> TorrentFile:
         return self._torrent_metadata
 
-    def get_peers(self) -> Peers:
+    def retrieve_peers(self) -> Peers:
         return self._peers

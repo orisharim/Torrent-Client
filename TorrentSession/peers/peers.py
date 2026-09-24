@@ -147,6 +147,14 @@ class Peers:
             if not connected:
                 await peer.close()
 
+    async def change_max_connections(self, new_max_connections: int) -> None:
+        async with self._peers_lock:
+            self._torrent_settings.max_connections = new_max_connections
+            if new_max_connections > 0:
+                while len(self._connections) > new_max_connections:
+                    peer_to_remove = self._connections.pop()
+                    await peer_to_remove.close()
+
     async def _reserve_peer(self, peer_key: Tuple[str, int]) -> bool:
         async with self._peers_lock:
             max_connections = self._torrent_settings.max_connections
