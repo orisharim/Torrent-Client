@@ -52,7 +52,7 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
 
     session : TorrentSession = None
     try:
-        session = TorrentSession(peer_id, torrent_file_path, download_path, settings)
+        session = TorrentSession(LISTENING_PORT, peer_id, torrent_file_path, download_path, settings)
         info_hash = session.get_torrent_metadata().info_hash
         torrent_key = (info_hash, download_path)
         if torrent_key in torrents:

@@ -12,7 +12,7 @@ async def main():
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)
-        await torrents_manager.change_torrent_status(info_hash, download_path, is_downloading=False, is_seeding=True)
+        await torrents_manager.change_torrent_status(info_hash, download_path, is_downloading=True, is_seeding=True)
         print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
 
         if res:

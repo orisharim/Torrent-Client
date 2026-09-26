@@ -94,6 +94,16 @@ class Peers:
         async with self._peers_lock:
             return list(self._connections)
 
+    async def get_connection_stats(self) -> dict[str, int]:
+        await self._remove_closed_connections()
+        async with self._peers_lock:
+            return {
+                "connected": len(self._connections),
+                "known": len(self._peers_info),
+                "connecting": len(self._connecting_peers),
+                "maximum": self._torrent_settings.max_connections,
+            }
+
     async def _choose_best_connection_candidates(self) -> List[PeerInfo]:
         await self._remove_closed_connections()
         async with self._peers_lock:
@@ -146,6 +156,29 @@ class Peers:
                     peer_info.failed_connection_attempts += 1
             if not connected:
                 await peer.close()
+
+    async def change_max_connections(self, new_max_connections: int) -> None:
+        if new_max_connections < 0:
+            raise ValueError("max_connections must be non-negative")
+
+        peers_to_close = []
+        async with self._peers_lock:
+            old_max_connections = self._torrent_settings.max_connections
+            self._torrent_settings.max_connections = new_max_connections
+            if new_max_connections > 0:
+                while len(self._connections) > new_max_connections:
+                    peers_to_close.append(self._connections.pop())
+
+        for peer in peers_to_close:
+            await peer.close()
+
+        increased_to_unlimited = new_max_connections == 0 and old_max_connections > 0
+        increased_limit = (
+            new_max_connections > old_max_connections
+            and old_max_connections > 0
+        )
+        if increased_to_unlimited or increased_limit:
+            await self.connect_to_peers()
 
     async def _reserve_peer(self, peer_key: Tuple[str, int]) -> bool:
         async with self._peers_lock:
