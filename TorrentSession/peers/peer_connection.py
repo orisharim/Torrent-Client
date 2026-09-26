@@ -27,7 +27,7 @@ class PeerConnection:
     MESSAGE_REQUEST = 6
     MESSAGE_PIECE = 7
     MESSAGE_CANCEL = 8
-    MAX_IN_FLIGHT_BLOCKS_PER_PIECE = 6
+    MAX_IN_FLIGHT_BLOCKS_PER_PIECE = 5
     MAX_BLOCK_RETRIES = 3
     BLOCK_DOWNLOAD_TIMEOUT = 10.0
 
@@ -271,15 +271,21 @@ class PeerConnection:
 
     async def _on_choke(self, payload: bytes) -> None:
         self._state.set_peer_choking(True)
+        print(f"Peer {self._host}:{self._port} choked us")
     
     async def _on_unchoke(self, payload: bytes) -> None:
         self._state.set_peer_choking(False)
+        print(f"Peer {self._host}:{self._port} unchoked us")
 
     async def _on_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(True)
+        if self._state.get_am_seeding():
+            await self.send_unchoke()
 
     async def _on_not_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(False)
+        if self._state.get_am_seeding():
+            await self.send_choke()
 
     async def _on_have(self, payload: bytes) -> None:
         piece_index = protocol_encoder.unpack_have_payload(payload)
@@ -291,7 +297,11 @@ class PeerConnection:
         await self.update_interest()
 
     async def _on_request(self, payload: bytes) -> None:
-        if self._state.get_am_choking() or not self._state.get_am_seeding():
+        if (
+            self._state.get_am_choking()
+            or not self._state.get_am_seeding()
+            or not self._state.is_peer_interested()
+        ):
             return
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "piece")
 
@@ -346,16 +356,23 @@ class PeerConnection:
         if piece_index < 0 or piece_index >= self._storage._total_piece_count:
             return
         if piece_index not in self._requested_pieces:
+            print(f"Ignoring unrequested block: piece {piece_index}, offset {begin} from {self._host}:{self._port}")
             return
         if await self._storage.is_piece_downloaded(piece_index):
             return
         if begin < 0 or len(block_data) <= 0 or begin >= self._storage.get_piece_length(piece_index):
             return
         
-        self._requested_pieces[piece_index].add_block(begin, block_data)
+        piece = self._requested_pieces[piece_index]
+        piece.add_block(begin, block_data)
+        print(
+            f"Received block: piece {piece_index}, offset {begin}, "
+            f"size {len(block_data)}, total {piece._received_bytes}/"
+            f"{piece.length} from {self._host}:{self._port}"
+        )
 
-        if self._requested_pieces[piece_index].is_complete():
-            piece_data = self._requested_pieces[piece_index].get_assembled_data()
+        if piece.is_complete():
+            piece_data = piece.get_assembled_data()
             await self._storage.add_piece(piece_index, None, piece_data)
             self._requested_pieces.pop(piece_index, None)
             
@@ -487,6 +504,7 @@ class PeerConnection:
 
     async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> bool:
         if self._state.is_peer_choking():
+            print(f"Request blocked because peer is choking: piece {piece_index} from {self._host}:{self._port}")
             return False
         if self._state.is_am_interested() is False:
             if not await self.send_interested():
@@ -512,30 +530,55 @@ class PeerConnection:
                     self._requested_pieces.pop(piece_index, None)
                 return False
 
-            semaphore = asyncio.Semaphore(self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE)
-            requests = []
+            block_offsets = list(range(0, piece_length, self.DEFAULT_BLOCK_LENGTH))
 
-            for begin in range(0, piece_length, self.DEFAULT_BLOCK_LENGTH):
-                length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
+            while not piece.is_complete():
+                batch = [
+                    offset
+                    for offset in block_offsets
+                    if offset not in piece.blocks
+                ][:self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE]
+                if not batch:
+                    break
 
-                async def request_block(offset: int, block_length: int) -> bool:
-                    async with semaphore:
-                        return await self.send_block_request(piece_index, offset, block_length)
+                for attempt in range(self.MAX_BLOCK_RETRIES):
+                    missing = [offset for offset in batch if offset not in piece.blocks]
+                    if not missing:
+                        break
 
-                requests.append(request_block(begin, length))
+                    requests = [
+                        self.send_block_request(
+                            piece_index,
+                            offset,
+                            min(self.DEFAULT_BLOCK_LENGTH, piece_length - offset),
+                        )
+                        for offset in missing
+                    ]
+                    if not all(await asyncio.gather(*requests)):
+                        print(f"Block request rejected: piece {piece_index} from {self._host}:{self._port}")
+                        await self.cancel_piece(piece_index)
+                        return False
 
-            if requests:
-                results = await asyncio.gather(*requests)
-                if not all(results):
-                    async with self._requested_pieces_lock:
-                        self._requested_pieces.pop(piece_index, None)
-                return all(results)
-            async with self._requested_pieces_lock:
-                self._requested_pieces.pop(piece_index, None)
+                    deadline = time.monotonic() + self.BLOCK_DOWNLOAD_TIMEOUT
+                    while not all(offset in piece.blocks for offset in batch):
+                        if time.monotonic() >= deadline:
+                            break
+                        await asyncio.sleep(0.05)
+
+                if not all(offset in piece.blocks for offset in batch):
+                    print(
+                        f"Timed out waiting for blocks of piece "
+                        f"{piece_index} from {self._host}:{self._port}"
+                    )
+                    await self.cancel_piece(piece_index)
+                    return False
+
+            if not piece.is_complete():
+                await self.cancel_piece(piece_index)
+                return False
             return True
         except (ConnectionError, asyncio.TimeoutError, ValueError):
-            async with self._requested_pieces_lock:
-                self._requested_pieces.pop(piece_index, None)
+            await self.cancel_piece(piece_index)
             return False
 
     async def is_choked(self) -> bool:

@@ -52,13 +52,13 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
 
     session : TorrentSession = None
     try:
-        session = TorrentSession(peer_id, torrent_file_path, download_path, settings)
+        session = TorrentSession(LISTENING_PORT, peer_id, torrent_file_path, download_path, settings)
         info_hash = session.get_torrent_metadata().info_hash
         torrent_key = (info_hash, download_path)
         if torrent_key in torrents:
             await session.close_all()
             return False
-        await session.retrieve_peers()
+        await session.find_peers()
     except Exception as exc:
         print(f"Failed to add torrent {torrent_file_path}: {exc}")
         if session is not None:
@@ -67,10 +67,10 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
 
     if global_settings.enable_receiving_peers:
         try:
-            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.retrieve_peers())
+            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.get_peers())
         except Exception as exc:
             print(f"Failed to enable receiving peers server for {torrent_file_path}: {exc}")
-            await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.retrieve_peers())
+            await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
             return False
 
     torrents[torrent_key] = session
@@ -127,7 +127,7 @@ async def change_global_settings(settings: GlobalTorrentSettings) -> None:
             raise RuntimeError("Could not start incoming peer listener")
 
         for session in torrents.values():
-            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.retrieve_peers())
+            await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.get_peers())
     elif not settings.enable_receiving_peers and global_settings.enable_receiving_peers:
         await peers_receiver.stop_listening()
 
@@ -139,7 +139,7 @@ async def remove_torrent(info_hash: bytes, download_path: str) -> bool:
         return False
     await session.close_all()
     if global_settings.enable_receiving_peers:
-        await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.retrieve_peers())
+        await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
     return True
 
 async def stop_torrent_client():
