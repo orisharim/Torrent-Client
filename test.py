@@ -17,7 +17,6 @@ async def main():
 
         if res:
             while True:
-                print("status: ", await torrents_manager.get_torrent_status(info_hash, download_path))
                 await asyncio.sleep(5)
 
         else:

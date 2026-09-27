@@ -2,7 +2,7 @@
 from TorrentSession import torrent_storage
 from TorrentSession.tracker_client import TrackerClient
 from TorrentSession.peers.peers import Peers
-import random
+from TorrentSession.session_logger import SessionLogger
 import time
 from typing import Optional
 from TorrentSession.piece import Piece
@@ -17,11 +17,6 @@ from torrent_settings import TorrentSettings
 from TorrentSession import piece_picker
 
 class TorrentSession:
-
-    PRINT_CONNECTION_AMOUNT = True
-    PRINT_PEER_PIECE_REQUESTS = True
-    PRINT_DOWNLOAD_SPEED = True
-
     VALIDATION_INTERVAL = 30.0
     PIECE_DOWNLOAD_TIMEOUT = 120.0
     PIECE_FAILS_RETRY_DELAY = 0.5
@@ -31,12 +26,14 @@ class TorrentSession:
 
     def __init__(self, listening_port: int, peer_id: bytes, torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> None:
         self._torrent_metadata = TorrentFile(torrent_file_path)
+        self._logger = SessionLogger(self._torrent_metadata.name)
+        self._logger.create_file(download_path)
         self._listening_port = listening_port
-        self._torrent_storage = TorrentStorage(self._torrent_metadata, download_path)
+        self._torrent_storage = TorrentStorage(self._torrent_metadata, download_path, self._logger)
         self._peer_id = peer_id
         self._torrent_settings = settings or TorrentSettings()
 
-        self._peers = Peers(peer_id, self._torrent_metadata, self._torrent_storage, self._torrent_settings)
+        self._peers = Peers(peer_id, self._torrent_metadata, self._torrent_storage, self._torrent_settings, self._logger)
 
         tracker_urls = []
         if self._torrent_metadata.announce is not None:
@@ -61,8 +58,7 @@ class TorrentSession:
         self._validation_task: Optional[asyncio.Task] = None
         self._download_tasks: list[asyncio.Task] = []
 
-        if TorrentSession.PRINT_CONNECTION_AMOUNT:
-            self._print_connected_peers_task: Optional[asyncio.Task] = None
+        self._print_connected_peers_task: Optional[asyncio.Task] = None
         
         self._calculate_download_speed_task: Optional[asyncio.Task] = None
         self._last_downloaded_piece_amount: int = 0
@@ -74,15 +70,13 @@ class TorrentSession:
         await self.stop_seeding()
         await self._stop_trackers()
         await self._peers.close_connections()
+        self._logger.close()
 
     async def find_peers(self):
         await self._start_trackers()
         await self._peers.connect_to_peers()
         stats = await self._peers.get_connection_stats()
-        print(
-            f"Peer discovery: {stats['known']} known, "
-            f"{stats['connected']} connected"
-        )
+        self._logger.log_by_file("torrent_session", f"Peer discovery: {stats['known']} known, {stats['connected']} connected")
     
     async def start_downloads(self):
         """starts downloading pieces from peers if already downloading it will restart the download process."""
@@ -97,8 +91,7 @@ class TorrentSession:
 
         self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())                
 
-        if TorrentSession.PRINT_CONNECTION_AMOUNT:
-            self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
+        self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
 
       
         async def download_loop():
@@ -121,7 +114,7 @@ class TorrentSession:
                 raise
             except Exception as e:
                 if self._is_downloading:
-                    print(f"Download loop error: {e}")
+                    self._logger.log_by_file("torrent_session", f"Download loop error: {e}")
                     await self.stop_downloads()
 
         self._download_tasks = []
@@ -170,12 +163,13 @@ class TorrentSession:
                     self._peer_id,
                     self._listening_port,
                     self._torrent_storage,
+                    self._logger,
                 )
                 try:
                     if not await tracker.contact():
                         continue
                 except Exception as exc:
-                    print(f"Failed to start tracker {tracker_url}: {exc}")
+                    self._logger.log_by_file("tracker_client", f"Failed to start tracker {tracker_url}: {exc}")
                     continue
 
                 async with successful_trackers_lock:
@@ -209,9 +203,11 @@ class TorrentSession:
             await asyncio.sleep(5.0)
             stats = await self._peers.get_connection_stats()
             maximum = stats["maximum"] or "unlimited"
-            print(
-                f"Peers: {stats['connected']}/{maximum} connected, "
-                f"{stats['connecting']} connecting, {stats['known']} known"
+            self._logger.log_connection_amount(
+                stats["connected"],
+                maximum,
+                stats["connecting"],
+                stats["known"],
             )
 
     async def _calculate_download_speed(self):
@@ -226,8 +222,7 @@ class TorrentSession:
             downloaded_bytes_difference = downloaded_bytes - self._last_downloaded_piece_amount
             download_speed = downloaded_bytes_difference / download_time / (1024 * 1024)
             self._current_download_speed = download_speed
-            if TorrentSession.PRINT_DOWNLOAD_SPEED:
-                print(f"Download speed: {download_speed:.2f} megabytes/second")
+            self._logger.log_download_speed(download_speed)
             self._last_downloaded_piece_amount = downloaded_bytes
             self._last_download_time = time.monotonic()
             await asyncio.sleep(1.0)
@@ -241,7 +236,7 @@ class TorrentSession:
                 return
             self._is_downloading = False
 
-            if TorrentSession.PRINT_CONNECTION_AMOUNT and self._print_connected_peers_task is not None:
+            if self._print_connected_peers_task is not None:
                 self._print_connected_peers_task.cancel()
                 try:
                     await self._print_connected_peers_task
@@ -249,7 +244,7 @@ class TorrentSession:
                     pass
                 self._print_connected_peers_task = None
 
-            if TorrentSession.PRINT_DOWNLOAD_SPEED and self._calculate_download_speed_task is not None:
+            if self._calculate_download_speed_task is not None:
                 self._calculate_download_speed_task.cancel()
                 try:
                     await self._calculate_download_speed_task
@@ -357,8 +352,7 @@ class TorrentSession:
                 return False
             self._requested_pieces.append(piece_index)
 
-        if TorrentSession.PRINT_PEER_PIECE_REQUESTS:
-            print(f"Requesting piece {piece_index} from {peer._host}:{peer._port}")
+        self._logger.log_peer_piece_request(piece_index, f"{peer._host}:{peer._port}")
 
         if not await peer.send_piece_request(piece_index):
             async with self._requested_pieces_lock:
@@ -377,7 +371,7 @@ class TorrentSession:
                 return True
 
             except asyncio.TimeoutError:
-                print(f"Piece {piece_index} download timeout from {peer._host}:{peer._port}")
+                self._logger.log_by_file("torrent_session", f"Piece {piece_index} download timeout from {peer._host}:{peer._port}")
                 await peer.cancel_piece(piece_index)
                 async with self._requested_pieces_lock:
                     if piece_index in self._requested_pieces:

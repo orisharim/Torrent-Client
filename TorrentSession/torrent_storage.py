@@ -6,6 +6,7 @@ import fcntl
 import os
 from Torrent.torrent_file import TorrentFile
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.session_logger import SessionLogger
 
 DEFAULT_BLOCK_LENGTH = 16 * 1024
 
@@ -62,7 +63,8 @@ def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]
 
 
 class TorrentStorage:
-    def __init__(self, torrent_metadata: TorrentFile, base_path: str = "downloads"):
+    def __init__(self, torrent_metadata: TorrentFile, base_path: str = "downloads", logger: SessionLogger | None = None):
+        self._logger = logger
         self._piece_length = torrent_metadata.piece_length
         self._torrent_metadata = torrent_metadata
         self._total_piece_count = len(torrent_metadata.pieces)

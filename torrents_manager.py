@@ -11,10 +11,9 @@ from TorrentSession.torrent_storage import TorrentStorage
 from torrent_settings import GlobalTorrentSettings, TorrentSettings
 
 LISTENING_PORT = 6881
-TorrentKey = tuple[bytes, str]
 
 peer_id = random.randbytes(20)
-torrents: dict[TorrentKey, TorrentSession] = {}
+torrents: dict[tuple[bytes, str], TorrentSession] = {}
 global_settings = None
 gateway_service = None
 
