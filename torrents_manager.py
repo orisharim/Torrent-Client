@@ -85,7 +85,7 @@ async def change_torrent_settings(info_hash: bytes, download_path: str, settings
     session = torrents.get((info_hash, download_path))
     if session is None:
         return False
-    session.change_settings(settings)
+    await session.change_settings(settings)
     return True
 
 async def get_torrent_status(info_hash: bytes, download_path: str) -> dict | None:

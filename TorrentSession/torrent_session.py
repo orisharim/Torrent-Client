@@ -20,9 +20,12 @@ class TorrentSession:
     VALIDATION_INTERVAL = 30.0
     PIECE_DOWNLOAD_TIMEOUT = 120.0
     PIECE_FAILS_RETRY_DELAY = 0.5
+    BLOCK_RETRY_DELAY = 1.0
+    
+    MAX_IN_FLIGHT_PIECES = 6
+    MAX_PEERS_PER_IN_FLIGHT_PIECE = 5 # max amount of peers to distribute the block requests between
+    DEFAULT_BLOCK_LENGTH = 16 * 1024
 
-    MAX_IN_FLIGHT_PIECES = 100
-    MAX_IN_FLIGHT_PIECES_PER_PEER = 2
 
     def __init__(self, listening_port: int, peer_id: bytes, torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> None:
         self._torrent_metadata = TorrentFile(torrent_file_path)
@@ -47,7 +50,7 @@ class TorrentSession:
         self._trackers: list[TrackerClient] = []
         self._tracker_start_tasks: list[asyncio.Task] = []
          
-        self._requested_pieces: list[int] = []
+        self._requested_pieces: set[int] = set()
 
         self._is_downloading = False
         self._is_seeding = False
@@ -88,9 +91,7 @@ class TorrentSession:
         
         self._is_downloading = True
         self._validation_task = asyncio.create_task(self._validate_pieces())
-
         self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())                
-
         self._print_connected_peers_task = asyncio.create_task(self._print_connected_peers())
 
       
@@ -211,7 +212,14 @@ class TorrentSession:
             )
 
     async def _calculate_download_speed(self):
-        while True:
+        self._last_download_time = time.monotonic()
+        downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
+        self._last_downloaded_piece_amount = sum(
+            self._torrent_storage.get_piece_length(piece_index)
+            for piece_index in downloaded_pieces
+        )
+        while self._is_downloading:
+            await asyncio.sleep(1.0)
             downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
             downloaded_bytes = sum(
                 self._torrent_storage.get_piece_length(piece_index)
@@ -219,14 +227,14 @@ class TorrentSession:
             )
             now = time.monotonic()
             download_time = now - self._last_download_time
-            downloaded_bytes_difference = downloaded_bytes - self._last_downloaded_piece_amount
-            download_speed = downloaded_bytes_difference / download_time / (1024 * 1024)
-            self._current_download_speed = download_speed
-            self._logger.log_download_speed(download_speed)
-            self._last_downloaded_piece_amount = downloaded_bytes
-            self._last_download_time = time.monotonic()
-            await asyncio.sleep(1.0)
-            
+            if download_time > 0:
+                downloaded_bytes_difference = downloaded_bytes - self._last_downloaded_piece_amount
+                download_speed = max(0.0, downloaded_bytes_difference / download_time / (1024 * 1024))
+                self._current_download_speed = download_speed
+                self._logger.log_download_speed(download_speed)
+                self._last_downloaded_piece_amount = downloaded_bytes
+                self._last_download_time = now
+
         self._current_download_speed = 0.0
 
     async def stop_downloads(self):
@@ -334,55 +342,136 @@ class TorrentSession:
         if not self._is_downloading or await self.is_complete():
             return False
 
-        piece_index = await piece_picker.select_next_piece(
-            self._torrent_storage.get_bitfield(),
-            len(self._torrent_metadata.pieces),
-            await self._peers.get_peers(),
-            self._requested_pieces,
-        )
-        if piece_index is None:
+        reservation = await self._reserve_next_piece()
+        if reservation is None:
             return False
 
-        peer = await piece_picker.select_peer_for_piece(piece_index, await self._peers.get_peers(), self.MAX_IN_FLIGHT_PIECES_PER_PEER )
-        if peer is None:
-            return False
+        piece, peers = reservation
+        assigned_peers: dict[int, set[PeerConnection]] = {}
+        pending_requests: dict[int, tuple[PeerConnection, float]] = {}
+        peer_index = 0
+        deadline = time.monotonic() + self.PIECE_DOWNLOAD_TIMEOUT
 
+        try:
+            while not piece.is_complete() and time.monotonic() < deadline:
+                peer_index = await self._send_block_requests(
+                    piece, peers, assigned_peers, pending_requests, peer_index
+                )
+                if peer_index < 0 and not pending_requests:
+                    self._logger.log_by_file("torrent_session", f"No active unchoked peers left for piece {piece.index}")
+                    return False
+
+                if piece.is_complete() or time.monotonic() >= deadline:
+                    break
+
+                piece.block_received_event.clear()
+                try:
+                    await asyncio.wait_for(piece.block_received_event.wait(), timeout=self.BLOCK_RETRY_DELAY)
+                except asyncio.TimeoutError:
+                    pass
+
+            if not piece.is_complete():
+                self._logger.log_by_file("torrent_session", f"Piece {piece.index} download timed out")
+                return False
+
+            assembled_data = piece.get_assembled_data()
+            if sha1(assembled_data).digest() != self._torrent_metadata.pieces[piece.index]:
+                self._logger.log_by_file(
+                    "torrent_session",
+                    f"Piece {piece.index} failed SHA-1 validation",
+                )
+                return False
+
+            await self._torrent_storage.add_piece(piece.index, None, assembled_data)
+            self._logger.log_downloaded_piece(piece.index, f"piece {piece.index}")
+            return True
+
+        finally:
+            await self._cancel_pending_blocks(piece.index, piece, assigned_peers)
+            async with self._requested_pieces_lock:
+                self._requested_pieces.discard(piece.index)
+
+    async def _reserve_next_piece(self) -> Optional[tuple[Piece, list[PeerConnection]]]:
         async with self._requested_pieces_lock:
-            if piece_index in self._requested_pieces:
-                return False
-            self._requested_pieces.append(piece_index)
+            available_peers = await self._peers.get_peers()
+            piece_index = await piece_picker.select_next_piece(
+                self._torrent_storage.get_bitfield(),
+                len(self._torrent_metadata.pieces),
+                available_peers,
+                self._requested_pieces,
+            )
+            if piece_index is None:
+                return None
 
-        self._logger.log_peer_piece_request(piece_index, f"{peer._host}:{peer._port}")
+            peers = await piece_picker.select_peers_for_piece(
+                piece_index, available_peers, self.MAX_PEERS_PER_IN_FLIGHT_PIECE
+            )
+            if not peers:
+                return None
 
-        if not await peer.send_piece_request(piece_index):
-            async with self._requested_pieces_lock:
-                if piece_index in self._requested_pieces:
-                    self._requested_pieces.remove(piece_index)
-            return False
+            self._requested_pieces.add(piece_index)
+            piece = Piece(
+                piece_index,
+                self._torrent_storage.get_piece_length(piece_index),
+                self.DEFAULT_BLOCK_LENGTH,
+            )
+            return piece, peers
 
-        piece = peer.get_piece(piece_index)
-        if piece is not None:
-            try:
-                await asyncio.wait_for(piece.wait_until_complete(), timeout=self.PIECE_DOWNLOAD_TIMEOUT)
-                await self._torrent_storage.set_piece_in_bitfield(piece_index)
-                async with self._requested_pieces_lock:
-                    if piece_index in self._requested_pieces:
-                        self._requested_pieces.remove(piece_index)
-                return True
+    async def _send_block_requests(
+        self,
+        piece: Piece,
+        peers: list[PeerConnection],
+        assigned_peers: dict[int, set[PeerConnection]],
+        pending_requests: dict[int, tuple[PeerConnection, float]],
+        peer_index: int,
+    ) -> int:
+        active_peers = []
+        for peer in peers:
+            if await peer.is_connected() and not await peer.is_choked():
+                active_peers.append(peer)
 
-            except asyncio.TimeoutError:
-                self._logger.log_by_file("torrent_session", f"Piece {piece_index} download timeout from {peer._host}:{peer._port}")
-                await peer.cancel_piece(piece_index)
-                async with self._requested_pieces_lock:
-                    if piece_index in self._requested_pieces:
-                        self._requested_pieces.remove(piece_index)
-                return False
-            
-        else:
-            async with self._requested_pieces_lock:
-                if piece_index in self._requested_pieces:
-                    self._requested_pieces.remove(piece_index)
-            return False
+        now = time.monotonic()
+        REQUEST_TIMEOUT = 5.0
+        expired_offsets = []
+        for offset, (p, send_time) in list(pending_requests.items()):
+            if piece.blocks.get(offset):
+                expired_offsets.append(offset)
+            elif p not in active_peers or (now - send_time > REQUEST_TIMEOUT):
+                expired_offsets.append(offset)
+
+        for offset in expired_offsets:
+            pending_requests.pop(offset, None)
+
+        if not active_peers:
+            return -1
+
+        offsets_to_request = [
+            offset for offset, data in piece.blocks.items()
+            if not data and offset not in pending_requests
+        ]
+
+        for offset in offsets_to_request:
+            peer = active_peers[peer_index % len(active_peers)]
+            peer_index += 1
+            block_length = min(self.DEFAULT_BLOCK_LENGTH, piece.length - offset)
+            if await peer.send_piece_request(piece.index, offset, block_length, piece):
+                pending_requests[offset] = (peer, time.monotonic())
+                assigned_peers.setdefault(offset, set()).add(peer)
+
+        return peer_index
+
+    async def _cancel_pending_blocks(self, piece_index: int, piece: Piece, assigned_peers: dict[int, set[PeerConnection]]) -> None:
+        cancel_tasks = []
+        for offset, peer_set in assigned_peers.items():
+            block_length = min(self.DEFAULT_BLOCK_LENGTH, piece.length - offset)
+            is_received = bool(piece.blocks.get(offset))
+            for peer in peer_set:
+                if not is_received:
+                    cancel_tasks.append(peer.send_cancel_request(piece_index, offset, block_length))
+                else:
+                    cancel_tasks.append(peer.clear_pending_request(piece_index, offset))
+        if cancel_tasks:
+            await asyncio.gather(*cancel_tasks, return_exceptions=True)
                 
     def is_piece_downloaded(self, piece_index: int) -> bool:
         return protocol_encoder.check_bitfield_has_piece(self._torrent_storage.get_bitfield(), piece_index)

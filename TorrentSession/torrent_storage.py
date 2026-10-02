@@ -8,7 +8,6 @@ from Torrent.torrent_file import TorrentFile
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from TorrentSession.session_logger import SessionLogger
 
-DEFAULT_BLOCK_LENGTH = 16 * 1024
 
 
 def _write_spans_sync(file_spans: list[tuple[Path, int, int]], data: bytes) -> None:
@@ -24,6 +23,7 @@ def _write_spans_sync(file_spans: list[tuple[Path, int, int]], data: bytes) -> N
                 f.seek(file_offset)
                 chunk = data[bytes_written : bytes_written + bytes_count]
                 f.write(chunk)
+                f.flush()
                 bytes_written += bytes_count
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -179,10 +179,18 @@ class TorrentStorage:
         self, piece_index: int, begin: Optional[int], block_data: bytes
     ) -> None:
         """Write piece data to disk and update internal structures."""
-        if await self._write_piece_to_disk(piece_index, begin, block_data):
-            async with self._downloaded_pieces_lock:
-                self._downloaded_pieces.add(piece_index)
-            await self.set_piece_in_bitfield(piece_index)
+        if await self.is_piece_downloaded(piece_index):
+            return
+
+        await self._write_piece_to_disk(piece_index, begin, block_data)
+
+        if begin is None:
+            await self.mark_piece_downloaded(piece_index)
+
+    async def mark_piece_downloaded(self, piece_index: int) -> None:
+        async with self._downloaded_pieces_lock:
+            self._downloaded_pieces.add(piece_index)
+        await self.set_piece_in_bitfield(piece_index)
 
     async def delete_piece(self, piece_index: int) -> None:
         """Fill the disk space of the piece with zeros and clear download records."""
@@ -193,7 +201,7 @@ class TorrentStorage:
             self._downloaded_pieces.discard(piece_index)
         await self.clear_piece_in_bitfield(piece_index)
 
-    async def _validate_piece(self, piece_index: int) -> bool:
+    async def validate_piece(self, piece_index: int) -> bool:
         """Verify the integrity of a piece by checking its SHA1 digest."""
         if piece_index < 0 or piece_index >= self._total_piece_count:
             return False
@@ -206,22 +214,23 @@ class TorrentStorage:
         expected_hash = self._torrent_metadata.pieces[piece_index]
         return piece_hash == expected_hash
 
+    async def _validate_piece(self, piece_index: int) -> bool:
+        return await self.validate_piece(piece_index)
+
     async def delete_broken_pieces(self) -> None:
         """Validate all downloaded pieces and delete any that are corrupted."""
         async with self._downloaded_pieces_lock:
             pieces_to_check = list(self._downloaded_pieces)
 
         for piece_index in pieces_to_check:
-            if not await self._validate_piece(piece_index):
+            if not await self.validate_piece(piece_index):
                 await self.delete_piece(piece_index)
 
     def is_complete(self) -> bool:
         """Check if all pieces in the torrent have been downloaded."""
         return len(self._downloaded_pieces) == self._total_piece_count
 
-    async def _write_piece_to_disk(
-        self, piece_index: int, begin: Optional[int], data: bytes
-    ) -> bool:
+    async def _write_piece_to_disk(self, piece_index: int, begin: Optional[int], data: bytes) -> bool:
         """Write a block of piece data to the corresponding files asynchronously."""
         file_spans = self._get_file_spans_for_piece(piece_index)
 
@@ -246,7 +255,7 @@ class TorrentStorage:
             return
 
         for idx in range(self._total_piece_count):
-            if await self._validate_piece(idx):
+            if await self.validate_piece(idx):
                 async with self._downloaded_pieces_lock:
                     self._downloaded_pieces.add(idx)
                 await self.set_piece_in_bitfield(idx)

@@ -49,7 +49,7 @@ async def stop_listening() -> None:
 async def handle_peer_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     global peers_by_info_hash, register_lock
     try:
-        handshake = await reader.readexactly(68)
+        handshake = await asyncio.wait_for(reader.readexactly(68), timeout=10.0)
         info_hash, remote_peer_id = protocol_encoder.unpack_handshake(handshake)
         async with register_lock:
             peers = peers_by_info_hash.get(info_hash)
@@ -60,7 +60,7 @@ async def handle_peer_connection(reader: asyncio.StreamReader, writer: asyncio.S
         await writer.drain()
         if not await peers.add_incoming_connection(reader, writer, remote_peer_id):
             raise ConnectionError("failed to start incoming peer")
-    except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError) as exc:
+    except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, OSError, ValueError) as exc:
         print(f"Rejected incoming peer connection: {exc}")
         writer.close()
         try:

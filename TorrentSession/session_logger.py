@@ -8,14 +8,14 @@ class SessionLogger:
 
     #specific stats to log
     LOG_INCOMING_MESSAGES = False
-    LOG_RECEIVED_BLOCKS = True
-    LOG_PEER_STATE_CHANGES = True
-    LOG_IGNORED_BLOCKS = True
-    LOG_BLOCK_REQUEST_FAILURES = True
+    LOG_RECEIVED_BLOCKS = False
+    LOG_PEER_STATE_CHANGES = False
+    LOG_IGNORED_BLOCKS = False
+    LOG_BLOCK_REQUEST_FAILURES = False
     LOG_DOWNLOADED_PIECES = True
     LOG_UPLOADED_PIECES = True
     LOG_CONNECTION_AMOUNT = True
-    LOG_PEER_PIECE_REQUESTS = True
+    LOG_PEER_PIECE_REQUESTS = False
     LOG_DOWNLOAD_SPEED = True
     LOG_UPLOAD_SPEED = True
 
@@ -25,7 +25,7 @@ class SessionLogger:
     LOG_PEERS_RECEIVER_FILE = True
     LOG_PORT_FORWARDER_FILE = True
     LOG_TORRENT_SESSION_FILE = True
-    LOG_TRACKER_FILES = True
+    LOG_TRACKER_FILES = True    
     LOG_TORRENT_STORAGE_FILE = True
 
     def __init__(self, torrent_name: str):
@@ -48,10 +48,11 @@ class SessionLogger:
             self.file.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
             self.file.flush()
 
-    def _publish_message(self, message: str, should_log: bool = True) -> None:
+    def _publish_message(self, message: str, enabled: bool = True) -> None:
+        if not enabled:
+            return
         self.print_session_message(message)
-        if should_log:
-            self.log(message)
+        self.log(message)
 
     @classmethod
     def print_session_message(cls, message: str) -> None:
