@@ -57,7 +57,6 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
         if torrent_key in torrents:
             await session.close_all()
             return False
-        await session.find_peers()
     except Exception as exc:
         print(f"Failed to add torrent {torrent_file_path}: {exc}")
         if session is not None:
@@ -153,4 +152,3 @@ async def stop_torrent_client():
 
 async def get_torrent(info_hash: bytes, download_path: str) -> TorrentSession | None:
     return torrents.get((info_hash, download_path))
-

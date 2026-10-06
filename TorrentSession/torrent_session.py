@@ -84,6 +84,8 @@ class TorrentSession:
         self._logger.close()
 
     async def find_peers(self):
+        if not self._is_downloading:
+            return
         await self._start_trackers()
         await self._peers.connect_to_peers()
         stats = await self._peers.get_connection_status()
@@ -94,10 +96,11 @@ class TorrentSession:
         await self.stop_downloads()
         await self._torrent_storage.restore_pieces_from_disk()
 
+        self._is_downloading = True
+        await self._peers.set_downloading(True)
         if await self._peers.has_connected_peers() is False:
             await self.find_peers()    
         
-        self._is_downloading = True
         self._download_background_task = asyncio.create_task(self._download_background())
         self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())                
         self._log_status_task = asyncio.create_task(self._log_session_status())
@@ -238,8 +241,12 @@ class TorrentSession:
     async def stop_downloads(self):
         async with self._stop_lock:
             if not self._is_downloading:
+                await self._peers.set_downloading(False)
+                await self._stop_trackers()
                 return
             self._is_downloading = False
+            await self._peers.set_downloading(False)
+            await self._stop_trackers()
 
             if self._log_status_task is not None and not self._is_seeding:
                 self._log_status_task.cancel()

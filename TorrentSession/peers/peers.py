@@ -32,6 +32,7 @@ class Peers:
         self._torrent_storage = torrent_storage
         self._peer_id = peer_id
         self._logger = logger
+        self._is_downloading = False
         self._is_seeding = False
         self._reconnect_task: Optional[asyncio.Task] = None
 
@@ -54,6 +55,9 @@ class Peers:
                     self._peers_info[peer_key] = PeerInfo(ip, port)
 
     async def add_incoming_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, remote_peer_id: bytes ) -> bool:
+        if not self._is_seeding:
+            return False
+
         peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage, self._logger)
         peer_key = (peer._host, peer._port)
 
@@ -82,6 +86,9 @@ class Peers:
                 await peer.close()
 
     async def connect_to_peers(self):
+        if not self._is_downloading:
+            return
+
         candidates = await self._choose_best_connection_candidates()
         tasks = []
         for peer_info in candidates:
@@ -123,6 +130,9 @@ class Peers:
             }
 
     async def _choose_best_connection_candidates(self) -> List[PeerInfo]:
+        if not self._is_downloading:
+            return []
+
         await self._remove_closed_connections()
         async with self._peers_lock:
             available_slots = len(self._peers_info)
@@ -151,6 +161,9 @@ class Peers:
         peer = PeerConnection.from_address(peer_info.ip, peer_info.port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage, self._logger)
         connected = False
         try:
+            if not self._is_downloading:
+                return False
+
             if not await peer.connect():
                 if self._logger:
                     self._logger.log_by_file("peers", f"Failed to connect to peer {peer._host}:{peer._port}")
@@ -200,6 +213,16 @@ class Peers:
         )
         if increased_to_unlimited or increased_limit:
             await self.connect_to_peers()
+
+    async def set_downloading(self, is_downloading: bool) -> None:
+        self._is_downloading = is_downloading
+        if is_downloading:
+            return
+
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            await asyncio.gather(self._reconnect_task, return_exceptions=True)
+            self._reconnect_task = None
 
     async def _reserve_peer(self, peer_key: Tuple[str, int]) -> bool:
         async with self._peers_lock:
