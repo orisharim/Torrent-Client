@@ -12,12 +12,14 @@ class SessionLogger:
     LOG_PEER_STATE_CHANGES = False
     LOG_IGNORED_BLOCKS = False
     LOG_BLOCK_REQUEST_FAILURES = False
-    LOG_DOWNLOADED_PIECES = True
+    LOG_DOWNLOADED_PIECES = False
     LOG_UPLOADED_PIECES = True
-    LOG_CONNECTION_AMOUNT = True
+    LOG_CONNECTION_AMOUNT = False
     LOG_PEER_PIECE_REQUESTS = False
     LOG_DOWNLOAD_SPEED = True
     LOG_UPLOAD_SPEED = True
+    LOG_TORRENT_SESSION_STATUS = True
+
 
     #files to log
     LOG_PEER_CONNECTION_FILE = True
@@ -96,6 +98,9 @@ class SessionLogger:
             f"Ignoring unrequested block: piece {piece}, offset {offset} from {peer}",
             self.LOG_IGNORED_BLOCKS,
         )
+
+    def log_torrent_session_status(self, status: str) -> None:
+        self._publish_message(f"Torrent session status: {status}", self.LOG_TORRENT_SESSION_STATUS)
 
     def log_block_request_failure(self, reason: str, piece: int, peer: str) -> None:
         if reason == "timed out":

@@ -6,15 +6,15 @@ class Piece:
         self.index = index
         self.length = length
         self.block_length = block_length
-        self.blocks: dict[int, bytes] = {}  # offset -> data
+        self.blocks: dict[int, bytes | None] = {}  # offset -> data
         for offset in range(0, length, block_length):
-            self.blocks[offset] = b""
+            self.blocks[offset] = None
         self.block_received_event = asyncio.Event()
 
     def add_block(self, offset: int, data: bytes) -> bool:
         if offset not in self.blocks or not data:
             return False
-        if self.blocks[offset]:
+        if self.blocks[offset] is not None:
             return False
         expected_length = min(self.block_length, self.length - offset)
         if len(data) != expected_length:
@@ -38,9 +38,9 @@ class Piece:
     def get_received_block_count(self) -> int:
         count = 0
         for block in self.blocks.values():
-            if len(block) > 0:
+            if block is not None and len(block) > 0:
                 count += 1
         return count
 
     def get_received_byte_count(self) -> int:
-        return sum(len(block) for block in self.blocks.values())
+        return sum(len(block) for block in self.blocks.values() if block is not None)

@@ -26,7 +26,7 @@ class Peers:
         self._peers_info: dict[Tuple[str, int], PeerInfo] = {}
         self._connecting_peers: set[Tuple[str, int]] = set()
         self._peers_lock = asyncio.Lock()
-
+        
         self._torrent_settings = torrent_settings
         self._torrent_metadata = torrent_metadata
         self._torrent_storage = torrent_storage
@@ -98,11 +98,25 @@ class Peers:
         async with self._peers_lock:
             return list(self._connections)
 
-    async def get_connection_stats(self) -> dict[str, int]:
+    async def get_unchoked_peers(self) -> List[PeerConnection]:
+        await self._remove_closed_connections()
+        unchoked_peers = []
+        async with self._peers_lock:
+            for peer in self._connections:
+                if not await peer.is_choked():
+                    unchoked_peers.append(peer)
+        return unchoked_peers
+
+    async def get_connection_status(self) -> dict[str, int]:
         await self._remove_closed_connections()
         async with self._peers_lock:
+            unchoked_peers = []
+            for peer in self._connections:
+                if not await peer.is_choked():
+                    unchoked_peers.append(peer)
             return {
                 "connected": len(self._connections),
+                "unchoked": len(unchoked_peers),
                 "known": len(self._peers_info),
                 "connecting": len(self._connecting_peers),
                 "maximum": self._torrent_settings.max_connections,
