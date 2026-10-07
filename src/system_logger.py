@@ -5,7 +5,7 @@ from pathlib import Path
 class SystemLogger:
     """Logger for events belonging to the running torrent client."""
 
-    LOG_DIRECTORY = Path(__file__).resolve().parent / "logs" / "system"
+    LOG_DIRECTORY = Path(__file__).resolve().parents[1] / "logs" / "system"
     PRINT_SYSTEM_MESSAGES = True
     LOG_SYSTEM_MESSAGES = True
 

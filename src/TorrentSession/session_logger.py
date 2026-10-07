@@ -3,7 +3,7 @@ from pathlib import Path
 
 class SessionLogger:
 
-    LOG_DIRECTORY = Path(__file__).resolve().parent.parent / "logs" / "session"
+    LOG_DIRECTORY = Path(__file__).resolve().parents[2] / "logs" / "session"
     PRINT_SESSION_MESSAGES = True
     LOG_SESSION_MESSAGES = True
 
