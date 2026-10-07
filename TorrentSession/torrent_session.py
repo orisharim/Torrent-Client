@@ -31,7 +31,7 @@ class TorrentSession:
     def __init__(self, listening_port: int, peer_id: bytes, torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None,) -> None:
         self._torrent_metadata = TorrentFile(torrent_file_path)
         self._logger = SessionLogger(self._torrent_metadata.name)
-        self._logger.create_file(download_path)
+        self._logger.create_file()
         self._listening_port = listening_port
         self._torrent_storage = TorrentStorage(self._torrent_metadata, download_path, self._logger)
         self._peer_id = peer_id

@@ -3,6 +3,7 @@ import socket
 from async_upnp_client.client_factory import UpnpFactory
 from async_upnp_client.search import async_search
 from async_upnp_client.aiohttp import AiohttpRequester
+from system_logger import SystemLogger
 
 def _get_local_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -12,8 +13,9 @@ def _get_local_ip() -> str:
     finally:
         s.close()
 
-async def forward_port(port: int, protocol: str = "TCP", description: str = "Torrent Client"):
-    print("[*] Searching for Internet Gateway Device...")
+async def forward_port(port: int, protocol: str = "TCP", description: str = "Torrent Client", logger: SystemLogger | None = None):
+    if logger:
+        logger.log_by_file("port_forwarder", "[*] Searching for Internet Gateway Device...")
     
     # target only the internet gateway device
     target_st = "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
@@ -29,7 +31,8 @@ async def forward_port(port: int, protocol: str = "TCP", description: str = "Tor
     if not igd_location:
         raise RuntimeError("No UPnP Internet Gateway Device responded.")
 
-    print(f"Found gateway descriptor at: {igd_location}")
+    if logger:
+        logger.log_by_file("port_forwarder", f"Found gateway descriptor at: {igd_location}")
 
     requester = AiohttpRequester()
     factory = UpnpFactory(requester)
@@ -64,14 +67,16 @@ async def forward_port(port: int, protocol: str = "TCP", description: str = "Tor
         NewPortMappingDescription=description,
         NewLeaseDuration=0,
     )
-    print(f"Forwarded {protocol.upper()} {port} -> {local_ip}:{port}")
+    if logger:
+        logger.log_by_file("port_forwarder", f"Forwarded {protocol.upper()} {port} -> {local_ip}:{port}")
     return service
 
-async def delete_port(service, port: int, protocol: str = "TCP"):
+async def delete_port(service, port: int, protocol: str = "TCP", logger: SystemLogger | None = None):
     action = service.action("DeletePortMapping")
     await action.async_call(
         NewRemoteHost="",
         NewExternalPort=port,
         NewProtocol=protocol.upper(),
     )
-    print(f"[-] Deleted port mapping for {protocol.upper()} {port}")
+    if logger:
+        logger.log_by_file("port_forwarder", f"[-] Deleted port mapping for {protocol.upper()} {port}")

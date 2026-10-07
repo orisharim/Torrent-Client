@@ -6,8 +6,8 @@ async def main():
 
     torrent_settings = torrents_manager.TorrentSettings()
 
-    torrent_file_path = "/home/ori/Desktop/torrentsfortest/ubuntu-26.04.1-desktop-amd64.iso.torrent"
-    download_path = "/home/ori/Desktop/torrentsfortest/ubuntudownload"
+    torrent_file_path = "/home/ori/Desktop/torrentsfortest/jojo.torrent"
+    download_path = "/home/ori/Desktop/torrentsfortest/jojogame"
     info_hash = torrents_manager.TorrentFile(torrent_file_path).info_hash
     try:
         await torrents_manager.start_torrent_client()

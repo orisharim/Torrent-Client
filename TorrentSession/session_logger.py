@@ -3,6 +3,7 @@ from pathlib import Path
 
 class SessionLogger:
 
+    LOG_DIRECTORY = Path(__file__).resolve().parent.parent / "logs" / "session"
     PRINT_SESSION_MESSAGES = True
     LOG_SESSION_MESSAGES = True
 
@@ -24,8 +25,6 @@ class SessionLogger:
     #files to log
     LOG_PEER_CONNECTION_FILE = True
     LOG_PEERS_FILE = True
-    LOG_PEERS_RECEIVER_FILE = True
-    LOG_PORT_FORWARDER_FILE = True
     LOG_TORRENT_SESSION_FILE = True
     LOG_TRACKER_FILES = True    
     LOG_TORRENT_STORAGE_FILE = True
@@ -35,14 +34,18 @@ class SessionLogger:
         self.file = None
         self.name = None
 
-    def create_file(self, file_path: str) -> None:
-        name = self.torrent_name.replace(" ", "_") + datetime.now().strftime("%Y-%m-%d_%H:%M:%S") + ".log"
-        Path(file_path).mkdir(parents=True, exist_ok=True)
-        self.name = str(Path(file_path) / name)
+    def create_file(self, file_path: str | Path | None = None) -> None:
+        name = (
+            f"session_{self.torrent_name.replace(' ', '_')}_"
+            f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        )
+        log_directory = Path(file_path) if file_path else self.LOG_DIRECTORY
+        log_directory.mkdir(parents=True, exist_ok=True)
+        self.name = str(log_directory / name)
         try:
-            self.file = open(self.name, "w")
-        except Exception as e:
-            self.print_session_message(f"Failed to create log file: {e}")
+            self.file = open(self.name, "w", encoding="utf-8")
+        except OSError as exc:
+            self.print_session_message(f"Failed to create session log file: {exc}")
             self.file = None
 
     def log(self, message: str) -> None:
@@ -70,8 +73,6 @@ class SessionLogger:
         file_logging = {
             "peer_connection": self.LOG_PEER_CONNECTION_FILE,
             "peers": self.LOG_PEERS_FILE,
-            "peers_receiver": self.LOG_PEERS_RECEIVER_FILE,
-            "port_forwarder": self.LOG_PORT_FORWARDER_FILE,
             "torrent_session": self.LOG_TORRENT_SESSION_FILE,
             "tracker_client": self.LOG_TRACKER_FILES,
             "contact_tracker": self.LOG_TRACKER_FILES,
