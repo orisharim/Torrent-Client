@@ -10,13 +10,43 @@ export type SearchResult = {
   magnet: string;
 };
 
-// field names match the real backend contract (confirmed against src/hooks/useSettings.ts, not guessed)
-export type AppSettings = {
-  max_connection: number; // 0 means unlimited
-  download_speed: number; // MB/s, 0 means no limit
-  upload_speed_limit: number; // MB/s, 0 means no limit
-  tracker_amount: number; // amount of trackers to contact at once, 0 means all
-  enable_receiving: boolean;
-  enable_dht: boolean;
-  enable_port_downloading: boolean;
+
+// golbal setting only (flask has 3 fields)
+export type GlobalSettings = {
+  enable_receiving : boolean;
+  enable_dht : boolean;
+  enable_post_downloading : boolean;
 };
+
+//per torrent settings (flask has 4 fields)
+export type TorrentSettings = {
+  max_connections : number;
+  download_speed_limit : number;
+  upload_speed_limit : number;
+  tracker_amount : number; 
+}
+
+//torrent type with parameters
+export type Torrent = {
+  torrent_file_path : string;
+  info_hash : string;
+  download_path : string;
+  timestamp : number;
+  download_speed : number;
+  downloaded_pieces : number;
+  total_pieces : number;
+  is_downloading : boolean;
+  is_seeding : boolean; 
+  connected_peers : number;
+}
+
+//legacy app setting (just in case)
+export type AppSettings = GlobalSettings & {
+  max_connections : number;
+  download_speed : number;
+  upload_speed_limit : number;
+  tracker_amount : number;
+}
+
+
+
