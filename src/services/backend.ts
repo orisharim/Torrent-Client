@@ -7,5 +7,5 @@ export const API_BASE = `${baseUrl}/api`;
 
 //helper for path encoding 
 export const encodePath = (path : string) : string => {
-    return encodeURIComponent(path)
+    return encodeURIComponent(encodeURIComponent(path))
 }
