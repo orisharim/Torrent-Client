@@ -5,18 +5,14 @@ from TorrentSession.peers.peer_state import PeerState
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from TorrentSession.piece import Piece
 from TorrentSession.torrent_storage import TorrentStorage
+from TorrentSession.session_logger import SessionLogger
 
 class PeerConnection:
-    PRINT_INCOMING_MESSAGES = False
-    PRINT_DOWNLOADED_PIECES = True
-    PRINT_UPLOADED_PIECES = True
-    
-
-    DEFAULT_BLOCK_LENGTH = 16 * 1024
     CONNECTION_TIMEOUT = 20.0
     HEARTBEAT_INTERVAL = 60.0
     CLOSE_CONNECTION_TIMEOUT = 120.0
     UPLOAD_TIMEOUT = 30.0
+    REQUEST_TIMEOUT = 30.0
     
     MESSAGE_CHOKE = 0
     MESSAGE_UNCHOKE = 1
@@ -27,21 +23,19 @@ class PeerConnection:
     MESSAGE_REQUEST = 6
     MESSAGE_PIECE = 7
     MESSAGE_CANCEL = 8
-    MAX_IN_FLIGHT_BLOCKS_PER_PIECE = 5
-    MAX_BLOCK_RETRIES = 3
-    BLOCK_DOWNLOAD_TIMEOUT = 10.0
 
-    def __init__(self, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> None:
+    def __init__(self, info_hash: bytes, peer_id: bytes, storage: TorrentStorage, logger: SessionLogger | None = None) -> None:
         self._info_hash = info_hash
         self._peer_id = peer_id
         self._storage = storage
+        self._logger = logger
         self._closing = False
         self._handshake_done = False
 
         self._receive_message_loop_task: Optional[asyncio.Task] = None
         self._upload_tasks: dict[tuple[int,int], tuple[asyncio.Task, float]] = {} # (piece_index, begin), (task, timestamp)
         self._heartbeat_task: Optional[asyncio.Task] = None
-        self._requested_pieces: dict[int, Piece] = {}
+        self._requested_pieces: dict[tuple[int, int], tuple[Piece, float]] = {} # (piece_index, begin), (piece, timestamp)
 
         self._write_lock = asyncio.Lock()
         self._upload_tasks_lock = asyncio.Lock()
@@ -53,8 +47,8 @@ class PeerConnection:
         self._state.update_bitfield(protocol_encoder.generate_empty_bitfield(total_piece_count = self._storage.get_total_piece_count()))
 
     @classmethod
-    def from_address(cls, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> 'PeerConnection':
-        peer = cls(info_hash, peer_id, storage)
+    def from_address(cls, host: str, port: int, info_hash: bytes, peer_id: bytes, storage: TorrentStorage, logger: SessionLogger | None = None) -> 'PeerConnection':
+        peer = cls(info_hash, peer_id, storage, logger)
         peer._host = host
         peer._port = port
         peer._reader = None
@@ -64,8 +58,8 @@ class PeerConnection:
         return peer
 
     @classmethod
-    def from_connection(cls, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, info_hash: bytes, peer_id: bytes, storage: TorrentStorage) -> 'PeerConnection':
-        peer = cls(info_hash, peer_id, storage)
+    def from_connection(cls, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, info_hash: bytes, peer_id: bytes, storage: TorrentStorage, logger: SessionLogger | None = None) -> 'PeerConnection':
+        peer = cls(info_hash, peer_id, storage, logger)
         peer._reader = reader
         peer._writer = writer
         peer._host = None
@@ -98,7 +92,8 @@ class PeerConnection:
                 return True
             except Exception as exc:
                 await self.disconnect()
-                print(f"Peer connection failed for {self._host}:{self._port}: {type(exc).__name__}: {exc}")
+                if self._logger:
+                    self._logger.log_by_file("peer_connection", f"Peer connection failed for {self._host}:{self._port}: {type(exc).__name__}: {exc}")
                 return False
 
     def _is_connected(self) -> bool:
@@ -190,6 +185,7 @@ class PeerConnection:
                 self._receive_message_loop_task = asyncio.create_task(self._message_loop())
                 self._heartbeat_task = asyncio.create_task(self._heartbeat())
 
+                await self.update_interest()
                 return True
             except Exception:
                 await self.disconnect()
@@ -217,6 +213,9 @@ class PeerConnection:
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
+        async with self._requested_pieces_lock:
+            self._requested_pieces.clear()
+
         self._receive_message_loop_task = None
         self._heartbeat_task = None
 
@@ -233,9 +232,8 @@ class PeerConnection:
         except Exception as exc:
             if not self._closing:
                 await self.disconnect()
-            print(
-                f"Peer message loop failed for {self._host}:{self._port}: {exc}"
-            )
+            if self._logger:
+                self._logger.log_by_file("peer_connection", f"Peer message loop failed for {self._host}:{self._port}: {exc}")
 
     async def _read_message(self) -> None:
         length_prefix = await self._read_exactly(4, timeout=self.CLOSE_CONNECTION_TIMEOUT)
@@ -247,8 +245,10 @@ class PeerConnection:
         message = await self._read_exactly(message_length, timeout=self.CONNECTION_TIMEOUT)
         message_id, payload = message[0], message[1:]
 
-        if PeerConnection.PRINT_INCOMING_MESSAGES:
-            print(f"Received message from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}")
+        if self._logger:
+            self._logger.log_incoming_message(
+                f"from {self._host}:{self._port} - ID: {message_id}, Payload Length: {len(payload)}"
+            )
 
         if message_id == self.MESSAGE_CHOKE:
             await self._on_choke(payload)
@@ -271,11 +271,13 @@ class PeerConnection:
 
     async def _on_choke(self, payload: bytes) -> None:
         self._state.set_peer_choking(True)
-        print(f"Peer {self._host}:{self._port} choked us")
+        if self._logger:
+            self._logger.log_peer_state_change("choked us", f"{self._host}:{self._port}")
     
     async def _on_unchoke(self, payload: bytes) -> None:
         self._state.set_peer_choking(False)
-        print(f"Peer {self._host}:{self._port} unchoked us")
+        if self._logger:
+            self._logger.log_peer_state_change("unchoked us", f"{self._host}:{self._port}")
 
     async def _on_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(True)
@@ -297,13 +299,11 @@ class PeerConnection:
         await self.update_interest()
 
     async def _on_request(self, payload: bytes) -> None:
-        if (
-            self._state.get_am_choking()
-            or not self._state.get_am_seeding()
-            or not self._state.is_peer_interested()
-        ):
+        if (self._state.get_am_choking() or not self._state.get_am_seeding() or not self._state.is_peer_interested()):
             return
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "piece")
+        if self._logger:
+            self._logger.log_peer_piece_request(piece_index)
 
         async with self._upload_tasks_lock:
             request_key = (piece_index, begin)
@@ -331,10 +331,15 @@ class PeerConnection:
             if not await self.send_message(self.MESSAGE_PIECE, payload):
                 raise ConnectionError("peer rejected the piece message")
             await self._storage.record_uploaded_piece(piece_index, len(data))
-            if PeerConnection.PRINT_UPLOADED_PIECES:
-                print(f"Uploaded piece {piece_index} to {self._host}:{self._port}")
+            if self._logger:
+                self._logger.log_uploaded_piece(
+                    piece_index,
+                    f"{self._host}:{self._port}",
+                )
             
         except Exception as exc:
+            if self._logger:
+                self._logger.log_upload_error(piece_index, begin, str(exc))
             raise ConnectionError(
                 f"Failed to send piece {piece_index} at offset {begin} to peer"
             ) from exc
@@ -355,31 +360,36 @@ class PeerConnection:
 
         if piece_index < 0 or piece_index >= self._storage._total_piece_count:
             return
-        if piece_index not in self._requested_pieces:
-            print(f"Ignoring unrequested block: piece {piece_index}, offset {begin} from {self._host}:{self._port}")
-            return
+
         if await self._storage.is_piece_downloaded(piece_index):
+            async with self._requested_pieces_lock:
+                self._requested_pieces.pop((piece_index, begin), None)
             return
+
+        async with self._requested_pieces_lock:
+            request_info = self._requested_pieces.get((piece_index, begin))
+            if request_info is None:
+                if self._logger:
+                    self._logger.log_ignored_block(piece_index, begin, f"{self._host}:{self._port}")
+                return
+        
         if begin < 0 or len(block_data) <= 0 or begin >= self._storage.get_piece_length(piece_index):
+            async with self._requested_pieces_lock:
+                self._requested_pieces.pop((piece_index, begin), None)
             return
         
-        piece = self._requested_pieces[piece_index]
-        piece.add_block(begin, block_data)
-        print(
-            f"Received block: piece {piece_index}, offset {begin}, "
-            f"size {len(block_data)}, total {piece._received_bytes}/"
-            f"{piece.length} from {self._host}:{self._port}"
-        )
+        piece = request_info[0]
+        if not piece.add_block(begin, block_data):
+            async with self._requested_pieces_lock:
+                self._requested_pieces.pop((piece_index, begin), None)
+            return
 
-        if piece.is_complete():
-            piece_data = piece.get_assembled_data()
-            await self._storage.add_piece(piece_index, None, piece_data)
-            self._requested_pieces.pop(piece_index, None)
-            
-            if PeerConnection.PRINT_DOWNLOADED_PIECES:
-                remote_peer_id = self._state.get_remote_peer_id()
-                peer_label = remote_peer_id.hex() if remote_peer_id is not None else f"{self._host}:{self._port}"
-                print(f"From {peer_label} - Piece {piece_index} completed")
+        if self._logger:
+            self._logger.log_received_block(piece_index, begin, len(block_data), f"{piece.get_received_byte_count()}/{piece.length}", f"{self._host}:{self._port}" )
+
+        async with self._requested_pieces_lock:
+            self._requested_pieces.pop((piece_index, begin), None)
+
         
     async def _on_cancel(self, payload: bytes) -> None:
         piece_index, begin, length = protocol_encoder.unpack_request_payload(payload, "cancel")
@@ -427,6 +437,15 @@ class PeerConnection:
                         task.cancel()
                         self._upload_tasks.pop(key, None)
 
+            now = time.monotonic()
+            async with self._requested_pieces_lock:
+                expired_requests = [
+                    key for key, (_, timestamp) in self._requested_pieces.items()
+                    if now - timestamp > self.REQUEST_TIMEOUT
+                ]
+                for key in expired_requests:
+                    self._requested_pieces.pop(key, None)
+
             if self._last_message_receive_time is not None and (time.monotonic() - self._last_message_receive_time) > self.CLOSE_CONNECTION_TIMEOUT:
                 await self.disconnect()
                 break
@@ -438,30 +457,7 @@ class PeerConnection:
                     await self.disconnect()
                     break
 
-    async def send_handshake(self) -> bool:
-        if not await self.connect():
-            return False
-        handshake = protocol_encoder.pack_handshake(self._info_hash, self._peer_id)
-                
-        try:
-            await self._write_packet(handshake)
-            response = await self._read_exactly(68)
-        except (ConnectionError, asyncio.TimeoutError, ValueError):
-            await self.disconnect()
-            return False
-
-        self._last_message_receive_time = time.monotonic()
-        try:
-            remote_info_hash, remote_peer_id = protocol_encoder.unpack_handshake(response, expected_info_hash=self._info_hash)
-            self._state.set_remote_peer_id(remote_peer_id)
-            if remote_info_hash != self._info_hash:
-                await self.disconnect()
-                return False
-            return True
-        except (ValueError, ConnectionError):
-            await self.disconnect()
-            return False
-
+    
     async def send_message(self, message_id: Optional[int], payload: bytes = b"") -> bool:
         if self._closing:
             return False
@@ -502,84 +498,36 @@ class PeerConnection:
         payload = protocol_encoder.pack_have_payload(piece_index)
         return await self.send_message(self.MESSAGE_HAVE, payload)
 
-    async def send_block_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> bool:
+    async def send_piece_request(self, piece_index: int, begin: int, length: int, piece: Piece) -> bool:
         if self._state.is_peer_choking():
-            print(f"Request blocked because peer is choking: piece {piece_index} from {self._host}:{self._port}")
+            if self._logger:
+                self._logger.log_block_request_failure("blocked because peer is choking", piece_index, f"{self._host}:{self._port}")
             return False
         if self._state.is_am_interested() is False:
             if not await self.send_interested():
                 return False
         payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
-        return await self.send_message(self.MESSAGE_REQUEST, payload)
+        async with self._requested_pieces_lock:
+            self._requested_pieces[(piece_index, begin)] = (piece, time.monotonic())
+        sent = await self.send_message(self.MESSAGE_REQUEST, payload)
+        if not sent:
+            async with self._requested_pieces_lock:
+                self._requested_pieces.pop((piece_index, begin), None)
+        else:
+            if self._logger:
+                self._logger.log_peer_piece_request(piece_index, f"{self._host}:{self._port}")
+        return sent
     
-    async def send_cancel_request(self, piece_index: int, begin: int, length: int = DEFAULT_BLOCK_LENGTH) -> bool:
+    async def send_cancel_request(self, piece_index: int, begin: int, length: int) -> bool:
+        async with self._requested_pieces_lock:
+            self._requested_pieces.pop((piece_index, begin), None)
+                
         payload = protocol_encoder.pack_request_payload(piece_index, begin, length)
         return await self.send_message(self.MESSAGE_CANCEL, payload) 
 
-    async def send_piece_request(self, piece_index: int) -> bool:
+    async def clear_pending_request(self, piece_index: int, begin: int) -> None:
         async with self._requested_pieces_lock:
-            if piece_index in self._requested_pieces:
-                return False
-            piece = Piece(piece_index, self._storage.get_piece_length(piece_index))
-            self._requested_pieces[piece_index] = piece
-
-        try:
-            piece_length = self._storage.get_piece_length(piece_index)
-            if piece_length <= 0:
-                async with self._requested_pieces_lock:
-                    self._requested_pieces.pop(piece_index, None)
-                return False
-
-            block_offsets = list(range(0, piece_length, self.DEFAULT_BLOCK_LENGTH))
-
-            while not piece.is_complete():
-                batch = [
-                    offset
-                    for offset in block_offsets
-                    if offset not in piece.blocks
-                ][:self.MAX_IN_FLIGHT_BLOCKS_PER_PIECE]
-                if not batch:
-                    break
-
-                for attempt in range(self.MAX_BLOCK_RETRIES):
-                    missing = [offset for offset in batch if offset not in piece.blocks]
-                    if not missing:
-                        break
-
-                    requests = [
-                        self.send_block_request(
-                            piece_index,
-                            offset,
-                            min(self.DEFAULT_BLOCK_LENGTH, piece_length - offset),
-                        )
-                        for offset in missing
-                    ]
-                    if not all(await asyncio.gather(*requests)):
-                        print(f"Block request rejected: piece {piece_index} from {self._host}:{self._port}")
-                        await self.cancel_piece(piece_index)
-                        return False
-
-                    deadline = time.monotonic() + self.BLOCK_DOWNLOAD_TIMEOUT
-                    while not all(offset in piece.blocks for offset in batch):
-                        if time.monotonic() >= deadline:
-                            break
-                        await asyncio.sleep(0.05)
-
-                if not all(offset in piece.blocks for offset in batch):
-                    print(
-                        f"Timed out waiting for blocks of piece "
-                        f"{piece_index} from {self._host}:{self._port}"
-                    )
-                    await self.cancel_piece(piece_index)
-                    return False
-
-            if not piece.is_complete():
-                await self.cancel_piece(piece_index)
-                return False
-            return True
-        except (ConnectionError, asyncio.TimeoutError, ValueError):
-            await self.cancel_piece(piece_index)
-            return False
+            self._requested_pieces.pop((piece_index, begin), None) 
 
     async def is_choked(self) -> bool:
         return self._state.is_peer_choking()
@@ -599,9 +547,15 @@ class PeerConnection:
         return self._state.get_bitfield()
 
     def get_piece(self, piece_index: int) -> Optional[Piece]:
-        return self._requested_pieces.get(piece_index, None)
+        for (requested_index, _), (piece, _) in self._requested_pieces.items():
+            if requested_index == piece_index:
+                return piece
+        return None
 
-    def get_requested_pieces(self) -> list[int]:
+    def get_requested_block_count(self) -> int:
+        return len(self._requested_pieces)
+
+    def get_requested_pieces(self) -> list[tuple[int, int]]:
         return list(self._requested_pieces.keys())
             
     def can_download_piece(self, piece_index: int) -> bool:
@@ -609,24 +563,13 @@ class PeerConnection:
         if bitfield is None:
             return False
         return protocol_encoder.check_bitfield_has_piece(bitfield, piece_index) and not self._state.is_peer_choking()
-
-    async def cancel_piece(self, piece_index: int) -> None:
-        async with self._requested_pieces_lock:
-            piece = self._requested_pieces.pop(piece_index, None)
-        
-        if piece is not None:
-            piece_length = self._storage.get_piece_length(piece_index)
-            for begin in range(0, piece_length, self.DEFAULT_BLOCK_LENGTH):
-                if begin not in piece.blocks:
-                    length = min(self.DEFAULT_BLOCK_LENGTH, piece_length - begin)
-                    try:
-                        await self.send_cancel_request(piece_index, begin, length)
-                    except (ConnectionError, asyncio.TimeoutError, ValueError):
-                        pass
-
+          
     async def update_interest(self) -> bool:
         peer_bitfield = self._state.get_bitfield()
         if peer_bitfield is None:
+            if not self._storage.is_complete():
+                if not self._state.is_am_interested():
+                    return await self.send_interested()
             return False
         
         has_interesting_pieces = False

@@ -2,9 +2,11 @@
 import asyncio
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from TorrentSession.peers.peers import Peers
+from system_logger import SystemLogger
 
 LISTENING_PORT = 6881
 server: asyncio.Server | None = None
+logger: SystemLogger | None = None
 peers_by_info_hash: dict[bytes, Peers] = {}
 register_lock = asyncio.Lock()
  
@@ -22,8 +24,10 @@ async def unregister_peers(info_hash: bytes, peers: Peers) -> None:
             del peers_by_info_hash[info_hash]
 
 
-async def start_listening(listening_port: int = LISTENING_PORT) -> bool:
-    global server
+async def start_listening(listening_port: int = LISTENING_PORT, system_logger: SystemLogger | None = None) -> bool:
+    global server, logger
+    if system_logger is not None:
+        logger = system_logger
     if server is not None:
         return True
     try:
@@ -31,9 +35,11 @@ async def start_listening(listening_port: int = LISTENING_PORT) -> bool:
             handle_peer_connection, "", listening_port
         )
     except OSError as exc:
-        print(f"Failed to start incoming peer listener on port {listening_port}: {exc}")
+        if logger:
+            logger.log_by_file("peers_receiver", f"Failed to start incoming peer listener on port {listening_port}: {exc}")
         return False
-    print(f"Listening for incoming peers on port {listening_port}")
+    if logger:
+        logger.log_by_file("peers_receiver", f"Listening for incoming peers on port {listening_port}")
     return True
 
 
@@ -49,7 +55,7 @@ async def stop_listening() -> None:
 async def handle_peer_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     global peers_by_info_hash, register_lock
     try:
-        handshake = await reader.readexactly(68)
+        handshake = await asyncio.wait_for(reader.readexactly(68), timeout=10.0)
         info_hash, remote_peer_id = protocol_encoder.unpack_handshake(handshake)
         async with register_lock:
             peers = peers_by_info_hash.get(info_hash)
@@ -60,8 +66,9 @@ async def handle_peer_connection(reader: asyncio.StreamReader, writer: asyncio.S
         await writer.drain()
         if not await peers.add_incoming_connection(reader, writer, remote_peer_id):
             raise ConnectionError("failed to start incoming peer")
-    except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError) as exc:
-        print(f"Rejected incoming peer connection: {exc}")
+    except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, OSError, ValueError) as exc:
+        if logger:
+            logger.log_by_file("peers_receiver", f"Rejected incoming peer connection: {exc}")
         writer.close()
         try:
             await writer.wait_closed()

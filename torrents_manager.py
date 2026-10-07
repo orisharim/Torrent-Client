@@ -9,22 +9,23 @@ from TorrentSession.torrent_session import TorrentSession
 from Torrent.torrent_file import TorrentFile
 from TorrentSession.torrent_storage import TorrentStorage
 from torrent_settings import GlobalTorrentSettings, TorrentSettings
+from system_logger import SystemLogger
 
 LISTENING_PORT = 6881
-TorrentKey = tuple[bytes, str]
 
 peer_id = random.randbytes(20)
-torrents: dict[TorrentKey, TorrentSession] = {}
+torrents: dict[tuple[bytes, str], TorrentSession] = {}
 global_settings = None
 gateway_service = None
+system_logger = SystemLogger()
 
 async def start_torrent_client(settings: GlobalTorrentSettings | None = None):
     global gateway_service
     global global_settings
     global_settings = settings or GlobalTorrentSettings()
-
+    system_logger.create_file()
     if global_settings.enable_receiving_peers:
-        if not await peers_receiver.start_listening(LISTENING_PORT):
+        if not await peers_receiver.start_listening(LISTENING_PORT, system_logger):
             raise RuntimeError("Could not start incoming peer listener")
     try:
         if global_settings.enable_port_forwarding and gateway_service is None:
@@ -32,9 +33,10 @@ async def start_torrent_client(settings: GlobalTorrentSettings | None = None):
                 LISTENING_PORT,
                 protocol="TCP",
                 description="Torrent Client",
+                logger=system_logger,
             )
     except Exception as exc:
-        print(f"Failed to set up port forwarding: {exc}")
+        system_logger.log_by_file("torrents_manager", f"Failed to set up port forwarding: {exc}")
         gateway_service = None
 
 async def get_torrents() -> list[dict[str, str]]:
@@ -58,9 +60,8 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
         if torrent_key in torrents:
             await session.close_all()
             return False
-        await session.find_peers()
     except Exception as exc:
-        print(f"Failed to add torrent {torrent_file_path}: {exc}")
+        system_logger.log_by_file("torrents_manager", f"Failed to add torrent {torrent_file_path}: {exc}")
         if session is not None:
             await session.close_all()
         return False
@@ -69,7 +70,7 @@ async def add_new_torrent(torrent_file_path: str, download_path: str, settings: 
         try:
             await peers_receiver.register_peers(session.get_torrent_metadata().info_hash, session.get_peers())
         except Exception as exc:
-            print(f"Failed to enable receiving peers server for {torrent_file_path}: {exc}")
+            system_logger.log_by_file("torrents_manager", f"Failed to enable receiving peers server for {torrent_file_path}: {exc}")
             await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
             return False
 
@@ -86,7 +87,7 @@ async def change_torrent_settings(info_hash: bytes, download_path: str, settings
     session = torrents.get((info_hash, download_path))
     if session is None:
         return False
-    session.change_settings(settings)
+    await session.change_settings(settings)
     return True
 
 async def get_torrent_status(info_hash: bytes, download_path: str) -> dict | None:
@@ -113,17 +114,18 @@ async def change_global_settings(settings: GlobalTorrentSettings) -> None:
                 LISTENING_PORT,
                 protocol="TCP",
                 description="Torrent Client",
+                logger=system_logger,
             )
         except Exception as exc:
-            print(f"Failed to set up port forwarding: {exc}")
+            system_logger.log_by_file("torrents_manager", f"Failed to set up port forwarding: {exc}")
             gateway_service = None
 
     elif not settings.enable_port_forwarding and global_settings.enable_port_forwarding:
-        await delete_port(gateway_service, LISTENING_PORT)
+        await delete_port(gateway_service, LISTENING_PORT, logger=system_logger)
         gateway_service = None
 
     if  settings.enable_receiving_peers and not global_settings.enable_receiving_peers:
-        if not await peers_receiver.start_listening(LISTENING_PORT):
+        if not await peers_receiver.start_listening(LISTENING_PORT, system_logger):
             raise RuntimeError("Could not start incoming peer listener")
 
         for session in torrents.values():
@@ -149,9 +151,9 @@ async def stop_torrent_client():
 
     global gateway_service
     if gateway_service is not None:
-        await delete_port(gateway_service, LISTENING_PORT)
+        await delete_port(gateway_service, LISTENING_PORT, logger=system_logger)
         gateway_service = None
+    system_logger.close()
 
 async def get_torrent(info_hash: bytes, download_path: str) -> TorrentSession | None:
     return torrents.get((info_hash, download_path))
-

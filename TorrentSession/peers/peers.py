@@ -8,6 +8,7 @@ from torrent_settings import TorrentSettings
 from Torrent.torrent_file import TorrentFile
 from TorrentSession.peers.peer_connection import PeerConnection
 from TorrentSession.torrent_storage import TorrentStorage
+from TorrentSession.session_logger import SessionLogger
 
 
 @dataclass
@@ -20,16 +21,18 @@ class PeerInfo:
 class Peers:
     RECONNECT_INTERVAL = 15.0
 
-    def __init__(self, peer_id: bytes, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings ) -> None:
+    def __init__(self, peer_id: bytes, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings, logger: SessionLogger | None = None) -> None:
         self._connections: List[PeerConnection] = []
         self._peers_info: dict[Tuple[str, int], PeerInfo] = {}
         self._connecting_peers: set[Tuple[str, int]] = set()
         self._peers_lock = asyncio.Lock()
-
+        
         self._torrent_settings = torrent_settings
         self._torrent_metadata = torrent_metadata
         self._torrent_storage = torrent_storage
         self._peer_id = peer_id
+        self._logger = logger
+        self._is_downloading = False
         self._is_seeding = False
         self._reconnect_task: Optional[asyncio.Task] = None
 
@@ -41,7 +44,8 @@ class Peers:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                print(f"Peer reconnect cycle failed: {exc}")
+                if self._logger:
+                    self._logger.log_by_file("peers", f"Peer reconnect cycle failed: {exc}")
 
     async def add_peers(self, peers_info: list[tuple[str, int]]):
         async with self._peers_lock:
@@ -51,11 +55,15 @@ class Peers:
                     self._peers_info[peer_key] = PeerInfo(ip, port)
 
     async def add_incoming_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, remote_peer_id: bytes ) -> bool:
-        peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage,)
+        if not self._is_seeding:
+            return False
+
+        peer = PeerConnection.from_connection(reader, writer, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage, self._logger)
         peer_key = (peer._host, peer._port)
 
         if not await self._reserve_peer(peer_key):
-            print(f"Cannot accept {peer._host}:{peer._port}; ""maximum connections reached or peer is already connecting")
+            if self._logger:
+                self._logger.log_by_file("peers", f"Cannot accept {peer._host}:{peer._port}; maximum connections reached or peer is already connecting")
             return False
 
         connected = False
@@ -78,6 +86,9 @@ class Peers:
                 await peer.close()
 
     async def connect_to_peers(self):
+        if not self._is_downloading:
+            return
+
         candidates = await self._choose_best_connection_candidates()
         tasks = []
         for peer_info in candidates:
@@ -94,17 +105,34 @@ class Peers:
         async with self._peers_lock:
             return list(self._connections)
 
-    async def get_connection_stats(self) -> dict[str, int]:
+    async def get_unchoked_peers(self) -> List[PeerConnection]:
+        await self._remove_closed_connections()
+        unchoked_peers = []
+        async with self._peers_lock:
+            for peer in self._connections:
+                if not await peer.is_choked():
+                    unchoked_peers.append(peer)
+        return unchoked_peers
+
+    async def get_connection_status(self) -> dict[str, int]:
         await self._remove_closed_connections()
         async with self._peers_lock:
+            unchoked_peers = []
+            for peer in self._connections:
+                if not await peer.is_choked():
+                    unchoked_peers.append(peer)
             return {
                 "connected": len(self._connections),
+                "unchoked": len(unchoked_peers),
                 "known": len(self._peers_info),
                 "connecting": len(self._connecting_peers),
                 "maximum": self._torrent_settings.max_connections,
             }
 
     async def _choose_best_connection_candidates(self) -> List[PeerInfo]:
+        if not self._is_downloading:
+            return []
+
         await self._remove_closed_connections()
         async with self._peers_lock:
             available_slots = len(self._peers_info)
@@ -130,16 +158,21 @@ class Peers:
 
     async def _connect_to_peer(self, peer_info: PeerInfo) -> bool:
         peer_key = (peer_info.ip, peer_info.port)
-        peer = PeerConnection.from_address(peer_info.ip, peer_info.port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage )
+        peer = PeerConnection.from_address(peer_info.ip, peer_info.port, self._torrent_metadata.info_hash, self._peer_id, self._torrent_storage, self._logger)
         connected = False
         try:
+            if not self._is_downloading:
+                return False
+
             if not await peer.connect():
-                print(f"Failed to connect to peer {peer._host}:{peer._port}")
+                if self._logger:
+                    self._logger.log_by_file("peers", f"Failed to connect to peer {peer._host}:{peer._port}")
                 return False
 
             if not await peer.is_message_loop_running():
                 if not await peer.start_message_loop():
-                    print(f"Failed to start message loop for peer {peer._host}:{peer._port}")
+                    if self._logger:
+                        self._logger.log_by_file("peers", f"Failed to start message loop for peer {peer._host}:{peer._port}")
                     return False
 
             async with self._peers_lock:
@@ -147,7 +180,8 @@ class Peers:
             connected = True
             return True
         except Exception as exc:
-            print(f"Exception connecting to peer {peer._host}:{peer._port} - {exc}")
+            if self._logger:
+                self._logger.log_by_file("peers", f"Exception connecting to peer {peer._host}:{peer._port} - {exc}")
             return False
         finally:
             async with self._peers_lock:
@@ -179,6 +213,16 @@ class Peers:
         )
         if increased_to_unlimited or increased_limit:
             await self.connect_to_peers()
+
+    async def set_downloading(self, is_downloading: bool) -> None:
+        self._is_downloading = is_downloading
+        if is_downloading:
+            return
+
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            await asyncio.gather(self._reconnect_task, return_exceptions=True)
+            self._reconnect_task = None
 
     async def _reserve_peer(self, peer_key: Tuple[str, int]) -> bool:
         async with self._peers_lock:

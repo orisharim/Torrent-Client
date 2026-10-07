@@ -7,6 +7,8 @@ import urllib.error
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
 from Torrent.bencode import decode_bencode
+from TorrentSession.session_logger import SessionLogger
+from TorrentSession.session_logger import SessionLogger
 
 CONTACT_TIMEOUT = 10
 # events: (str is for the http and the num is for the udp)
@@ -26,11 +28,12 @@ def parse_tracker_response(tracker_res: dict) -> Tuple[Optional[int], List[Tuple
     peers = _extract_peers_from_dict(tracker_res)
     return interval, peers
 
-async def contact_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, listening_port: int, event: Tuple[str, int] = KEEP_ALIVE, downloaded: int = 0, uploaded: int = 0, left: int = 0) -> Optional[Dict[str, Any]]:
+async def contact_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, listening_port: int, event: Tuple[str, int] = KEEP_ALIVE, downloaded: int = 0, uploaded: int = 0, left: int = 0, logger: SessionLogger | None = None) -> Optional[Dict[str, Any]]:
 
     event_str = event[0] if event else ""
     event_num = event[1] if event else 0
-    print(f"Contacting tracker: {tracker_url}")
+    if logger:
+        logger.log_by_file("contact_tracker", f"Contacting tracker: {tracker_url}")
     try:
         if tracker_url.startswith("udp"):
             return await asyncio.to_thread(
@@ -58,7 +61,8 @@ async def contact_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, l
             )
         raise ValueError(f"Unsupported tracker URL: {tracker_url}")
     except (OSError, TimeoutError, ValueError, struct.error, urllib.error.URLError) as e:
-        print(f"Failed to contact {tracker_url}: {e}")
+        if logger:
+            logger.log_by_file("contact_tracker", f"Failed to contact {tracker_url}: {e}")
         return None
 
 def _contact_http_tracker( tracker_url: str, info_hash: bytes, peer_id: bytes, listening_port: int, left: int, downloaded: int = 0, uploaded: int = 0, event: str = "") -> Dict[bytes, Any]:
