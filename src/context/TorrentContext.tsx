@@ -3,7 +3,7 @@ import { useTorrent } from "../hooks/useTorrent";
 import type { TorrentStatus } from "../services/types";
 
 export type Torrent = {
-  id: string; // torrentFilePath
+  id: string; // info_hash
   name: string;
   size: number; // TODO: backend doesn't report a byte size yet — always 0 for now
   progress: number; // 0-100
@@ -67,7 +67,7 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const torrents = useMemo<Torrent[]>(() => rawTorrents.map((t) => ({
-    id: t.torrentFilePath,
+    id: t.info_hash,
     name: torrentName(t.torrentFilePath),
     size: 0,
     progress: t.total_pieces > 0 ? (t.downloaded_pieces / t.total_pieces) * 100 : 0,
@@ -88,34 +88,52 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
     await hookAddTorrent(torrentFilePath, downloadPath);
   }, [hookAddTorrent]);
 
-  const pauseTorrent = useCallback((id: string) => { hookPauseTorrent(id); }, [hookPauseTorrent]);
-  const resumeTorrent = useCallback((id: string) => { hookResumeTorrent(id); }, [hookResumeTorrent]);
+  const findByInfoHash = useCallback(
+    (id: string) => rawTorrents.find((t) => t.info_hash === id),
+    [rawTorrents],
+  );
+
+  const pauseTorrent = useCallback((id: string) => {
+    const raw = findByInfoHash(id);
+    if (raw) hookPauseTorrent(id, raw.download_path);
+  }, [findByInfoHash, hookPauseTorrent]);
+
+  const resumeTorrent = useCallback((id: string) => {
+    const raw = findByInfoHash(id);
+    if (raw) hookResumeTorrent(id, raw.download_path);
+  }, [findByInfoHash, hookResumeTorrent]);
 
   const pauseAll = useCallback(() => {
-    rawTorrents.filter((t) => t.is_downloading).forEach((t) => hookPauseTorrent(t.torrentFilePath));
+    rawTorrents.filter((t) => t.is_downloading).forEach((t) => hookPauseTorrent(t.info_hash, t.download_path));
   }, [rawTorrents, hookPauseTorrent]);
 
   const pauseSelected = useCallback(() => {
     rawTorrents
-      .filter((t) => selected.has(t.torrentFilePath) && t.is_downloading)
-      .forEach((t) => hookPauseTorrent(t.torrentFilePath));
+      .filter((t) => selected.has(t.info_hash) && t.is_downloading)
+      .forEach((t) => hookPauseTorrent(t.info_hash, t.download_path));
   }, [rawTorrents, selected, hookPauseTorrent]);
 
   const deleteTorrents = useCallback((ids: string[]) => {
-    ids.forEach((id) => hookDeleteTorrent(id));
+    ids.forEach((id) => {
+      const raw = findByInfoHash(id);
+      if (raw) hookDeleteTorrent(id, raw.download_path);
+    });
     setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
-  }, [hookDeleteTorrent]);
+  }, [findByInfoHash, hookDeleteTorrent]);
 
   const updateTorrentStatus = useCallback((id: string, status: TorrentStatus) => {
-    if (status === "Downloading") hookResumeTorrent(id);
-    else if (status === "Paused") hookPauseTorrent(id);
-    else if (status === "Seeding") setStatus(id, false, true);
-  }, [hookResumeTorrent, hookPauseTorrent, setStatus]);
+    if (status === "Downloading") resumeTorrent(id);
+    else if (status === "Paused") pauseTorrent(id);
+    else if (status === "Seeding") {
+      const raw = findByInfoHash(id);
+      if (raw) setStatus(id, raw.download_path, false, true);
+    }
+  }, [resumeTorrent, pauseTorrent, findByInfoHash, setStatus]);
 
   const clearCompleted = useCallback(() => {
     rawTorrents
       .filter((t) => !t.is_downloading && !t.is_seeding && t.total_pieces > 0 && t.downloaded_pieces >= t.total_pieces)
-      .forEach((t) => hookDeleteTorrent(t.torrentFilePath));
+      .forEach((t) => hookDeleteTorrent(t.info_hash, t.download_path));
   }, [rawTorrents, hookDeleteTorrent]);
 
   return (

@@ -5,8 +5,8 @@ import { useUI } from "../../context/UIContext";
 import Button from "../UI/Button";
 import Modal from "../UI/Modal";
 import Toggle from "../UI/Toggle";
-import { useSettings, DEFAULT_SETTINGS } from "../../hooks/useSettings";
-import type { AppSettings } from "../../services/types";
+import { useSettings, DEFAULT_GLOBAL_SETTINGS } from "../../hooks/useSettings";
+import type { GlobalSettings } from "../../services/types";
 
 const Row = ({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) => (
   <div className="flex items-center justify-between gap-3">
@@ -25,8 +25,6 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
   </div>
 );
 
-const inputCls = "text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-2 py-1 bg-white dark:bg-stone-700 text-stone-700 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-blue-400";
-
 type SettingsPageProps = {
   onClose: () => void;
 };
@@ -34,7 +32,7 @@ type SettingsPageProps = {
 export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const { showToast } = useUI();
   const { settings: liveSettings, saveSettings, resetSettings } = useSettings();
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_GLOBAL_SETTINGS);
   const [saved, setSaved] = useState(false);
 
   // adopt the server-loaded settings as the editable draft once, when they first arrive
@@ -44,7 +42,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setSettings(liveSettings);
   }
 
-  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+  const update = <K extends keyof GlobalSettings>(key: K, value: GlobalSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -83,24 +81,6 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
         <div className="bg-white dark:bg-stone-800 border border-blue-100 dark:border-blue-900 rounded-xl p-5 flex flex-col gap-6">
           <Section title="Connection">
-            <Row label="Max connections" sub="0 = unlimited">
-              <input
-                type="number"
-                min={0}
-                value={settings.max_connection}
-                onChange={(e) => update("max_connection", Number(e.target.value))}
-                className={`w-20 text-end ${inputCls}`}
-              />
-            </Row>
-            <Row label="Tracker amount" sub="0 = contact all trackers">
-              <input
-                type="number"
-                min={0}
-                value={settings.tracker_amount}
-                onChange={(e) => update("tracker_amount", Number(e.target.value))}
-                className={`w-20 text-end ${inputCls}`}
-              />
-            </Row>
             <Row label="Enable receiving peers">
               <Toggle checked={settings.enable_receiving} onChange={(v) => update("enable_receiving", v)} />
             </Row>
@@ -110,35 +90,9 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
             <Row label="Enable port forwarding">
               <Toggle checked={settings.enable_port_downloading} onChange={(v) => update("enable_port_downloading", v)} />
             </Row>
-          </Section>
-
-          <Section title="Speed Limits">
-            <Row label="Download speed limit" sub="0 = unlimited">
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={settings.download_speed}
-                  onChange={(e) => update("download_speed", Number(e.target.value))}
-                  className={`w-20 text-end ${inputCls}`}
-                />
-                <span className="text-xs text-stone-400 dark:text-stone-500">MB/s</span>
-              </div>
-            </Row>
-            <Row label="Upload speed limit" sub="0 = unlimited">
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={settings.upload_speed_limit}
-                  onChange={(e) => update("upload_speed_limit", Number(e.target.value))}
-                  className={`w-20 text-end ${inputCls}`}
-                />
-                <span className="text-xs text-stone-400 dark:text-stone-500">MB/s</span>
-              </div>
-            </Row>
+            <p className="text-xs text-stone-400 dark:text-stone-500">
+              Connection limits and speed limits are per-torrent — configure them when adding a torrent.
+            </p>
           </Section>
 
           <DangerZone onReset={handleReset} />

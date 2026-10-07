@@ -1,4 +1,3 @@
-import { Download, Upload } from "lucide-react";
 import { API_BASE, encodePath } from "../services/backend";
 import { useEffect, useRef, useState } from "react";
 
@@ -32,7 +31,7 @@ const parseJson = async <T>(response : Response) : Promise<T> => {
 
 
 const getTorrentStatus = async(info_hash : string, download_path : string) : Promise<Torrent> => {
-    const response = await fetch(`${API_BASE}/torrents/status?${new URLSearchParams({info_hash , download_path})}`, {
+    const response = await fetch(`${API_BASE}/torrents/${info_hash}/${encodePath(download_path)}`, {
         method : "GET",
         headers : jsonHeaders
     });
@@ -75,7 +74,7 @@ const postAddTorrent = async(
     torrentFilePath : string, 
     downloadPath : string,
     settings?: any) : Promise<{info_hash : string}> => {
-        const response = await fetch(`${API_BASE}/torrent` , {
+        const response = await fetch(`${API_BASE}/torrents` , {
             method : "POST",
             headers : jsonHeaders,
             body : JSON.stringify({
@@ -116,7 +115,7 @@ const changeTorrentStatus = async(
         is_seeding : boolean,
         ) : Promise<boolean> => { 
     const response = await fetch(
-        `${API_BASE}/torrents/status/${info_hash}/${encodePath(download_path)}/`, {
+        `${API_BASE}/torrents/status/${info_hash}/${encodePath(download_path)}`, {
             method : "PUT", 
             headers : jsonHeaders,
             body : JSON.stringify({

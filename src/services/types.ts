@@ -3,7 +3,7 @@ export type TorrentStatus = "Downloading" | "Paused" | "Completed" | "Seeding";
 export type SearchResult = {
   id: number;
   name: string;
-  size: number; // GB, same convention as Torrent.size
+  size: number; 
   seeds: number;
   peers: number;
   source: string;
@@ -15,7 +15,7 @@ export type SearchResult = {
 export type GlobalSettings = {
   enable_receiving : boolean;
   enable_dht : boolean;
-  enable_post_downloading : boolean;
+  enable_port_downloading : boolean;
 };
 
 //per torrent settings (flask has 4 fields)
@@ -39,14 +39,5 @@ export type Torrent = {
   is_seeding : boolean; 
   connected_peers : number;
 }
-
-//legacy app setting (just in case)
-export type AppSettings = GlobalSettings & {
-  max_connections : number;
-  download_speed : number;
-  upload_speed_limit : number;
-  tracker_amount : number;
-}
-
 
 

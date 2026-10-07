@@ -1,12 +1,8 @@
 import { useEffect, useState } from "react";
-import type { AppSettings } from "../services/types";
-import { BASE_URL } from "../services/backend";
+import type { GlobalSettings } from "../services/types";
+import { API_BASE } from "../services/backend";
 
-export const DEFAULT_SETTINGS: AppSettings = {
-    max_connection: 50,
-    download_speed: 0,
-    upload_speed_limit: 0,
-    tracker_amount: 4,
+export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     enable_receiving: true,
     enable_dht: true,
     enable_port_downloading: true,
@@ -14,50 +10,56 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
-// path unconfirmed, guessing "/settings" to match the /torrents convention
-const getSettings = async (): Promise<AppSettings> => {
-    const response = await fetch(`${BASE_URL}/settings`, {
+const getGlobalSettings = async (): Promise<GlobalSettings> => {
+    const response = await fetch(`${API_BASE}/global_settings`, {
         method: "GET",
         headers: jsonHeaders,
     });
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-    return response.json();
+
+    const data = await response.json();
+    return {
+        enable_receiving: data.global_settings.enable_receiving_peers,
+        enable_dht: data.global_settings.enable_dht,
+        enable_port_downloading: data.global_settings.enable_port_forwarding,
+    };
 };
 
-// contract from teammate: POST {settingsName, value} — one field per call
-const postSetting = async <K extends keyof AppSettings>(settingsName: K, value: AppSettings[K]): Promise<boolean> => {
-    const response = await fetch(`${BASE_URL}/settings`, {
-        method: "POST",
+const saveGlobalSettings = async (settings: GlobalSettings): Promise<void> => {
+    const response = await fetch(`${API_BASE}/global_settings`, {
+        method: "PUT",
         headers: jsonHeaders,
-        body: JSON.stringify({ settingsName, value }),
+        body: JSON.stringify({
+            enable_receiving_peers: settings.enable_receiving,
+            enable_dht: settings.enable_dht,
+            enable_port_forwarding: settings.enable_port_downloading,
+        }),
     });
-    return response.ok;
+    if (!response.ok) throw new Error(`Failed to save settings: ${response.status}`);
 };
 
 export function useSettings() {
-    const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+    const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_GLOBAL_SETTINGS);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        getSettings()
+        getGlobalSettings()
             .then(setSettings)
             .finally(() => setLoading(false));
     }, []);
 
-    const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    const updateSetting = <K extends keyof GlobalSettings>(key: K, value: GlobalSettings[K]) => {
         setSettings((prev) => ({ ...prev, [key]: value }));
     };
 
-    // sends every field in `next` to the backend, one POST per field per the {settingsName, value} contract
-    const saveSettings = async (next: AppSettings): Promise<void> => {
-        const keys = Object.keys(next) as (keyof AppSettings)[];
-        await Promise.all(keys.map((key) => postSetting(key, next[key])));
+    const saveSettings = async (next: GlobalSettings): Promise<void> => {
+        await saveGlobalSettings(next);
         setSettings(next);
     };
 
-    const resetSettings = async (): Promise<AppSettings> => {
-        await saveSettings(DEFAULT_SETTINGS);
-        return DEFAULT_SETTINGS;
+    const resetSettings = async (): Promise<GlobalSettings> => {
+        await saveSettings(DEFAULT_GLOBAL_SETTINGS);
+        return DEFAULT_GLOBAL_SETTINGS;
     };
 
     return { settings, loading, updateSetting, saveSettings, resetSettings };
