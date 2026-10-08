@@ -1,4 +1,4 @@
-import { API_BASE, encodePath } from "../services/backend";
+import { API_BASE, encodePath, toBackendPath } from "../services/backend";
 import { useEffect, useRef, useState } from "react";
 
 const POLL_INTERVAL_MS = 500; 
@@ -16,6 +16,15 @@ interface Torrent {
     connected_peers: number;
 }
 
+
+// backend doesn't report a torrent name/file path, so remember the .torrent path at add time
+const NAMES_KEY = "app.torrentFilePaths";
+const loadNames = (): Record<string, string> => {
+    try { return JSON.parse(localStorage.getItem(NAMES_KEY) ?? "{}"); } catch { return {}; }
+}
+const saveName = (info_hash: string, torrentFilePath: string) => {
+    try { localStorage.setItem(NAMES_KEY, JSON.stringify({ ...loadNames(), [info_hash]: torrentFilePath })); } catch { /* ignore */ }
+}
 
 const jsonHeaders = {"Content-Type" : "application/json"};
 
@@ -47,7 +56,7 @@ const getTorrentStatus = async(info_hash : string, download_path : string) : Pro
         connected_peers: number
     }>(response);
 
-   return {torrentFilePath: download_path , info_hash , download_path, ...data}
+   return {torrentFilePath: loadNames()[info_hash] ?? info_hash.slice(0, 8) , info_hash , download_path, ...data}
 }
 
 
@@ -74,6 +83,8 @@ const postAddTorrent = async(
     torrentFilePath : string, 
     downloadPath : string,
     settings?: any) : Promise<{info_hash : string}> => {
+        torrentFilePath = toBackendPath(torrentFilePath);
+        downloadPath = toBackendPath(downloadPath);
         const response = await fetch(`${API_BASE}/torrents` , {
             method : "POST",
             headers : jsonHeaders,
@@ -147,19 +158,27 @@ export function useTorrent(){
             setLoading(false);
         }).catch(err => {
             console.error("Faild to load torrent: " , err);
+            setLoading(false);
         });
     } , []);
+
+    // torrents with a status change in flight: the backend can take a long time to apply it
+    // (resume re-validates every piece on disk), so polling must not overwrite the optimistic state
+    const pendingRef = useRef<Set<string>>(new Set());
+    // latest request made while one was in flight; sent once the current one finishes
+    const queuedRef = useRef<Map<string, { download_path: string, is_downloading: boolean, is_seeding: boolean }>>(new Map());
 
     //pull for update on downloading torrent 
     useEffect(() => {
         const interval = setInterval(() => {
             torrentRef.current
-            .filter((t) => t.is_downloading)
+            .filter((t) => t.is_downloading && !pendingRef.current.has(t.info_hash))
             .forEach((t) => {
                 getTorrentStatus(t.info_hash ,t.download_path).then((updated) => {
+                    if (pendingRef.current.has(updated.info_hash)) return;
                     setTorrents((prev) => 
                     prev.map((p) => p.info_hash === updated.info_hash ? updated : p));
-                });
+                }).catch(() => {});
             });
         }, POLL_INTERVAL_MS);
         return () => clearInterval(interval); 
@@ -168,34 +187,47 @@ export function useTorrent(){
 
     const addTorrent = async(torrentFilePath : string , downloadPath : string) : Promise<void> => {
         const result = await postAddTorrent(torrentFilePath, downloadPath);
-        const status = await getTorrentStatus(result.info_hash, downloadPath);
+        saveName(result.info_hash, torrentFilePath);
+        const status = await getTorrentStatus(result.info_hash, toBackendPath(downloadPath));
         setTorrents((prev) => [status , ...prev.filter((t) => t.info_hash !== result.info_hash)]);
     }
 
-    const pauseTorrent = async(info_hash :string,download_path :string) : Promise<void> => {
-        setTorrents((prev) => prev.map((t) => 
-        t.info_hash === info_hash ? {...t , is_downloading : false} : t ));
-
-        const torrent = torrents.find(t => t.info_hash === info_hash);
-        const ok = await changeTorrentStatus(info_hash, download_path, false,torrent?.is_seeding || false);
-        
-        if(!ok){
-            setTorrents((prev) => prev.map((t) => 
-            t.info_hash === info_hash ? {...t , is_downloading : true} : t));
+    // optimistic update, then sync with the backend's real state once the request settles
+    const applyStatus = async(info_hash : string, download_path : string, is_downloading : boolean, is_seeding : boolean) : Promise<void> => {
+        setTorrents((prev) => prev.map((t) =>
+            t.info_hash === info_hash ? {...t, is_downloading, is_seeding} : t));
+        if (pendingRef.current.has(info_hash)) {
+            queuedRef.current.set(info_hash, { download_path, is_downloading, is_seeding });
+            return;
+        }
+        pendingRef.current.add(info_hash);
+        try {
+            await changeTorrentStatus(info_hash, download_path, is_downloading, is_seeding);
+        } catch (err) {
+            console.error("Failed to change torrent status: ", err);
+        } finally {
+            pendingRef.current.delete(info_hash);
+        }
+        const next = queuedRef.current.get(info_hash);
+        if (next) {
+            queuedRef.current.delete(info_hash);
+            return applyStatus(info_hash, next.download_path, next.is_downloading, next.is_seeding);
+        }
+        try {
+            const fresh = await getTorrentStatus(info_hash, download_path);
+            setTorrents((prev) => prev.map((t) => t.info_hash === info_hash ? fresh : t));
+        } catch (err) {
+            console.error("Failed to refresh torrent status: ", err);
         }
     }
 
-    const resumeTorrent = async(info_hash : string , download_path : string) : Promise<void> =>{
-        setTorrents((prev) => prev.map((t) => 
-        t.info_hash === info_hash ? {...t, is_downloading : true} : t));
+    const currentSeeding = (info_hash : string) => torrentRef.current.find(t => t.info_hash === info_hash)?.is_seeding || false;
 
-        const torrent = torrents.find(t => t.info_hash === info_hash);
-        const ok = await changeTorrentStatus(info_hash,download_path,true,torrent?.is_seeding || false);
+    const pauseTorrent = (info_hash : string, download_path : string) : Promise<void> =>
+        applyStatus(info_hash, download_path, false, currentSeeding(info_hash));
 
-        if(!ok){
-            setTorrents((prev) => prev.map((t) => t.info_hash === info_hash ? {...t , is_downloading : false} : t));
-        }
-    }
+    const resumeTorrent = (info_hash : string, download_path : string) : Promise<void> =>
+        applyStatus(info_hash, download_path, true, currentSeeding(info_hash));
 
     const deleteTorrent = async(info_hash : string , download_path: string) : Promise<void> =>{
         const ok = await postDeleteTorrent(info_hash,download_path); 
@@ -205,19 +237,8 @@ export function useTorrent(){
         }
     }
 
-    const setStatus = async(info_hash : string ,download_path : string , is_downloading: boolean, is_seeding: boolean) : Promise<void> => {
-        setTorrents((prev) => prev.map((t) =>
-        t.info_hash === info_hash ? {...t , is_downloading, is_seeding} : t));
-
-        const ok = await changeTorrentStatus(info_hash, download_path , is_downloading, is_seeding);
-        if (!ok) {
-             getTorrentStatus(info_hash, download_path).then((fresh) => {
-                setTorrents((prev) => prev.map((t) => 
-                    t.info_hash === info_hash ? fresh : t
-                ));
-            });
-        }
-    }
+    const setStatus = (info_hash : string ,download_path : string , is_downloading: boolean, is_seeding: boolean) : Promise<void> =>
+        applyStatus(info_hash, download_path, is_downloading, is_seeding);
 
     return {
         torrents, 

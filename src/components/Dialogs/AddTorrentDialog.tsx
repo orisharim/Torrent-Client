@@ -24,9 +24,14 @@ export const AddTorrentDialog = () => {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    await addTorrent(torrentFilePath.trim(), downloadPath.trim());
-    showToast("Torrent added");
-    closeAddDialog();
+    try {
+      await addTorrent(torrentFilePath.trim(), downloadPath.trim());
+      showToast("Torrent added");
+      closeAddDialog();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to add torrent", "error");
+      setSubmitting(false);
+    }
   };
 
   const browseTorrentFile = async () => {
