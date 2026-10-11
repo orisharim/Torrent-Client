@@ -94,6 +94,7 @@ class SessionLogger:
     def log_peer_state_change(self, state: str, peer: str) -> None:
         self._publish_message(f"Peer {peer} {state}", self.LOG_PEER_STATE_CHANGES)
 
+    
     def log_ignored_block(self, piece: int, offset: int, peer: str) -> None:
         self._publish_message(
             f"Ignoring unrequested block: piece {piece}, offset {offset} from {peer}",

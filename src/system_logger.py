@@ -13,6 +13,7 @@ class SystemLogger:
     LOG_TORRENTS_MANAGER_FILE = True
     LOG_PEERS_RECEIVER_FILE = True
     LOG_PORT_FORWARDER_FILE = True
+    LOG_SYSTEM_STORAGE_FILE = True
 
     def __init__(self) -> None:
         self.file = None
@@ -62,6 +63,7 @@ class SystemLogger:
             "torrents_manager": self.LOG_TORRENTS_MANAGER_FILE,
             "peers_receiver": self.LOG_PEERS_RECEIVER_FILE,
             "port_forwarder": self.LOG_PORT_FORWARDER_FILE,
+            "system_storage": self.LOG_SYSTEM_STORAGE_FILE,
         }
         if file_name in file_logging:
             self._publish_message(message, file_logging[file_name])

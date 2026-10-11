@@ -59,6 +59,7 @@ class TorrentSession:
         self._requested_pieces_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
 
+        self._start_downloads_task: Optional[asyncio.Task] = None
         self._download_background_task: Optional[asyncio.Task] = None
         self._download_tasks: list[asyncio.Task] = []
 
@@ -94,22 +95,40 @@ class TorrentSession:
     async def start_downloads(self):
         """starts downloading pieces from peers if already downloading it will restart the download process."""
         await self.stop_downloads()
-        await self._torrent_storage.restore_pieces_from_disk()
-
         self._is_downloading = True
         await self._peers.set_downloading(True)
-        if await self._peers.has_connected_peers() is False:
-            await self.find_peers()    
-        
-        self._download_background_task = asyncio.create_task(self._download_background())
-        self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())                
-        self._log_status_task = asyncio.create_task(self._log_session_status())
 
-        self._download_tasks = []
-        unchoked_peers = await self._peers.get_unchoked_peers()
-        for _ in range(max(self.MAX_IN_FLIGHT_PIECES, len(unchoked_peers))):
-            self._download_tasks.append(asyncio.create_task(self._download_loop()))
+        async def start_download_tasks():
+            try:
 
+                async with asyncio.TaskGroup() as startup_tasks:
+                    startup_tasks.create_task(self._torrent_storage.wait_for_restore())
+                    startup_tasks.create_task(self.find_peers())
+                if not self._is_downloading:
+                    return
+
+                self._download_background_task = asyncio.create_task(self._download_background())
+                self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())
+                self._log_status_task = asyncio.create_task(self._log_session_status())
+
+                unchoked_peers = await self._peers.get_unchoked_peers()
+                self._download_tasks = []
+                for _ in range(max(self.MAX_IN_FLIGHT_PIECES, len(unchoked_peers))):
+                    self._download_tasks.append(asyncio.create_task(self._download_loop()))
+            
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._logger.log_by_file(
+                    "torrent_session",
+                    f"Failed to finish starting downloads: {exc}",
+                )
+                self._is_downloading = False
+            finally:
+                if self._start_downloads_task is asyncio.current_task():
+                    self._start_downloads_task = None
+
+        self._start_downloads_task = asyncio.create_task(start_download_tasks())
 
     async def _download_loop(self):
         try:
@@ -209,8 +228,7 @@ class TorrentSession:
         while self._is_downloading or self._is_seeding:
             await asyncio.sleep(5.0)
             status = await self.get_status()
-            if self._logger:
-                self._logger.log_torrent_session_status(status)
+            self._logger.log_torrent_session_status(status)
 
     async def _calculate_download_speed(self):
         self._last_download_time = time.monotonic()
@@ -240,53 +258,40 @@ class TorrentSession:
 
     async def stop_downloads(self):
         async with self._stop_lock:
-            if not self._is_downloading:
-                await self._peers.set_downloading(False)
-                await self._stop_trackers()
-                return
+            was_downloading = self._is_downloading
             self._is_downloading = False
+
+            if was_downloading:
+                self._logger.log_by_file("torrent_session", f"Download stopped")
+
+            await self._cancel_task(self._start_downloads_task)
+            self._start_downloads_task = None
             await self._peers.set_downloading(False)
             await self._stop_trackers()
 
-            if self._log_status_task is not None and not self._is_seeding:
-                self._log_status_task.cancel()
-                try:
-                    await self._log_status_task
-                except asyncio.CancelledError:
-                    pass
+            if not self._is_seeding:
+                await self._cancel_task(self._log_status_task)
                 self._log_status_task = None
 
-            if self._calculate_download_speed_task is not None:
-                self._calculate_download_speed_task.cancel()
-                try:
-                    await self._calculate_download_speed_task
-                except asyncio.CancelledError:
-                    pass
-                self._calculate_download_speed_task = None
+            await self._cancel_task(self._calculate_download_speed_task)
+            self._calculate_download_speed_task = None
 
-            if self._download_background_task is not None:
-                self._download_background_task.cancel()
-                try:
-                    await self._download_background_task
-                except asyncio.CancelledError:
-                    pass
-
+            await self._cancel_task(self._download_background_task)
             self._download_background_task = None
 
-            # cancel the download tasks
             current_task = asyncio.current_task()
-            for task in self._download_tasks:
-                if task is not current_task:
-                    task.cancel()
-
-            tasks_to_await = []
-            for t in self._download_tasks:
-                if t is not current_task:
-                    tasks_to_await.append(t)
-
-            if tasks_to_await:
-                await asyncio.gather(*tasks_to_await, return_exceptions=True)
+            download_tasks = [
+                task for task in self._download_tasks
+                if task is not current_task
+            ]
+            for task in download_tasks:
+                task.cancel()
+            if download_tasks:
+                await asyncio.gather(*download_tasks, return_exceptions=True)
             self._download_tasks = []
+
+            if not was_downloading:
+                return
 
             # send not interested to the peers
             peers_snapshot = await self._peers.get_peers()
@@ -303,6 +308,12 @@ class TorrentSession:
             async with self._requested_pieces_lock:
                 self._requested_pieces.clear()
 
+    @staticmethod
+    async def _cancel_task(task: Optional[asyncio.Task]) -> None:
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     async def _stop_trackers(self):
         """Stops all trackers from contacting the tracker servers"""
