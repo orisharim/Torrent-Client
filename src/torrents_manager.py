@@ -110,13 +110,25 @@ async def _load_torrent(torrent_file_path: str, download_path: str, settings: To
 async def add_new_torrent(torrent_file_path: str, download_path: str, settings: TorrentSettings | None = None ) -> bool:
     settings = settings or TorrentSettings()
 
-    loaded_torrent = await _load_torrent(torrent_file_path, download_path, settings)
+    copied_torrent_path: Path | None = None
+    try:
+        info_hash = TorrentFile(torrent_file_path).info_hash
+        if info_hash is None:
+            raise ValueError(f"Torrent file has no info hash: {torrent_file_path}")
+        copied_torrent_path = _copy_torrent_file(torrent_file_path, info_hash)
+    except (OSError, ValueError, TypeError) as exc:
+        system_logger.log_by_file(
+            "torrents_manager",
+            f"Failed to copy torrent file {torrent_file_path}: {type(exc).__name__}: {exc}",
+        )
+        return False
+
+    loaded_torrent = await _load_torrent(str(copied_torrent_path), download_path, settings)
     if loaded_torrent is None:
         return False
 
     torrent_key, session = loaded_torrent
     try:
-        _copy_torrent_file(torrent_file_path, torrent_key[0])
         system_storage.add_torrent(torrent_key[0], download_path, settings)
     except (OSError, ValueError, TypeError) as exc:
         system_logger.log_by_file(
@@ -200,25 +212,33 @@ async def remove_torrent(info_hash: bytes, download_path: str) -> bool:
     if global_settings.enable_receiving_peers:
         await peers_receiver.unregister_peers(session.get_torrent_metadata().info_hash, session.get_peers())
     
-    torrents = []
-    for stored_torrent in system_storage.get_torrents():
-        if stored_torrent[0] != info_hash or stored_torrent[1] != download_path:
-            torrents.append(stored_torrent)
+    stored_torrents = [
+        stored_torrent
+        for stored_torrent in system_storage.get_torrents()
+        if stored_torrent[0] != info_hash or stored_torrent[1] != download_path
+    ]
 
-    system_storage.save_torrents(torrents)
+    system_storage.save_torrents(stored_torrents)
 
-    try:
-        _torrent_file_path(info_hash).unlink(missing_ok=True)
-    except OSError as exc:
-        system_logger.log_by_file(
-            "torrents_manager",
-            f"Failed to remove stored torrent file {_torrent_file_path(info_hash)}: {type(exc).__name__}: {exc}",
-        )
+    if not any(stored_torrent[0] == info_hash for stored_torrent in stored_torrents):
+        try:
+            _torrent_file_path(info_hash).unlink(missing_ok=True)
+        except OSError as exc:
+            system_logger.log_by_file(
+                "torrents_manager",
+                f"Failed to remove stored torrent file {_torrent_file_path(info_hash)}: {type(exc).__name__}: {exc}",
+            )
     return True
 
 async def stop_torrent_client():
-    for info_hash, download_path in list(torrents):
-        await remove_torrent(info_hash, download_path)
+    for torrent_key, session in list(torrents.items()):
+        await session.close_all()
+        if global_settings.enable_receiving_peers:
+            await peers_receiver.unregister_peers(
+                session.get_torrent_metadata().info_hash,
+                session.get_peers(),
+            )
+        torrents.pop(torrent_key, None)
     await peers_receiver.stop_listening()
 
     global gateway_service
