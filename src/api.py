@@ -430,7 +430,13 @@ def get_torrent_settings(info_hash, download_path):
         "message_status": "success",
         "timestamp": timestamp,
     }
-    return jsonify({**data, **torrent_status}), OK
+    return jsonify({
+        **data,
+        "max_connections": torrent_status.max_connections,
+        "download_speed_limit": torrent_status.download_speed_limit,
+        "upload_speed_limit": torrent_status.upload_speed_limit,
+        "tracker_amount": torrent_status.tracker_amount,
+    }), OK
 
 @app.route('/api/torrents', methods=['POST'])
 def add_new_torrent():

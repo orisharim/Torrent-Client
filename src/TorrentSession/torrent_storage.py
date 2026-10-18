@@ -62,6 +62,55 @@ def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]
     return bytes(piece_data) if piece_data else None
 
 
+def _restore_pieces_sync(
+    file_offsets: list[tuple[Path, int, int]],
+    piece_length: int,
+    piece_hashes: list[bytes],
+) -> set[int]:
+    """Validate all available pieces while reusing file handles and locks."""
+    files = []
+    try:
+        for file_path, _, _ in file_offsets:
+            if not file_path.exists():
+                return set()
+            file = open(file_path, "rb")
+            fcntl.flock(file.fileno(), fcntl.LOCK_SH)
+            files.append(file)
+
+        downloaded_pieces = set()
+        total_length = sum(file_length for _, _, file_length in file_offsets)
+        for piece_index, expected_hash in enumerate(piece_hashes):
+            piece_start = piece_index * piece_length
+            piece_size = min(piece_length, total_length - piece_start)
+            if piece_size <= 0:
+                continue
+
+            piece_data = bytearray()
+            range_end = piece_start + piece_size
+            for file_index, (_, file_start, file_length) in enumerate(file_offsets):
+                file_end = file_start + file_length
+                if piece_start >= file_end or range_end <= file_start:
+                    continue
+
+                overlap_start = max(piece_start, file_start)
+                overlap_end = min(range_end, file_end)
+                files[file_index].seek(overlap_start - file_start)
+                chunk = files[file_index].read(overlap_end - overlap_start)
+                if len(chunk) != overlap_end - overlap_start:
+                    piece_data = bytearray()
+                    break
+                piece_data.extend(chunk)
+
+            if len(piece_data) == piece_size and sha1(piece_data).digest() == expected_hash:
+                downloaded_pieces.add(piece_index)
+
+        return downloaded_pieces
+    finally:
+        for file in files:
+            fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+            file.close()
+
+
 class TorrentStorage:
     def __init__(self, torrent_metadata: TorrentFile, base_path: str = "downloads", logger: SessionLogger | None = None):
         self._logger = logger
@@ -81,7 +130,7 @@ class TorrentStorage:
 
         self.files = torrent_metadata.files_info
         self._build_file_offset_map()
-        asyncio.create_task(self.restore_pieces_from_disk())
+        self._restore_task = asyncio.create_task(self.restore_pieces_from_disk())
 
     async def get_downloaded_pieces(self) -> set[int]:
         async with self._downloaded_pieces_lock:
@@ -245,20 +294,29 @@ class TorrentStorage:
 
     async def restore_pieces_from_disk(self) -> None:
         """Scan the disk for existing files and mark valid pieces as downloaded."""
-        any_file_exists = False
-        for file_path, _, _ in self.file_offsets:
-            if file_path.exists() and file_path.stat().st_size > 0:
-                any_file_exists = True
-                break
-        
-        if not any_file_exists:
+        if not any(
+            file_path.exists() and file_path.stat().st_size > 0
+            for file_path, _, _ in self.file_offsets
+        ):
             return
 
-        for idx in range(self._total_piece_count):
-            if await self.validate_piece(idx):
-                async with self._downloaded_pieces_lock:
-                    self._downloaded_pieces.add(idx)
-                await self.set_piece_in_bitfield(idx)
+        downloaded_pieces = await asyncio.to_thread(
+            _restore_pieces_sync,
+            self.file_offsets,
+            self._piece_length,
+            self._torrent_metadata.pieces,
+        )
+        async with self._downloaded_pieces_lock:
+            self._downloaded_pieces = downloaded_pieces
+
+        bitfield = protocol_encoder.generate_empty_bitfield(self._total_piece_count)
+        for piece_index in downloaded_pieces:
+            bitfield = protocol_encoder.set_piece_in_bitfield(bitfield, piece_index)
+        async with self._bitfield_lock:
+            self._bitfield = bitfield
+
+    async def wait_for_restore(self) -> None:
+        await self._restore_task
 
     def get_total_piece_count(self) -> int:
         """Get the total number of pieces in the torrent."""
