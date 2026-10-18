@@ -36,6 +36,10 @@ class PeerConnection:
         self._upload_tasks: dict[tuple[int,int], tuple[asyncio.Task, float]] = {} # (piece_index, begin), (task, timestamp)
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._requested_pieces: dict[tuple[int, int], tuple[Piece, float]] = {} # (piece_index, begin), (piece, timestamp)
+        self._downloaded_bytes = 0
+        self._uploaded_bytes = 0
+        self._download_start_time: Optional[float] = None
+        self._upload_start_time: Optional[float] = None
 
         self._write_lock = asyncio.Lock()
         self._upload_tasks_lock = asyncio.Lock()
@@ -331,6 +335,9 @@ class PeerConnection:
             if not await self.send_message(self.MESSAGE_PIECE, payload):
                 raise ConnectionError("peer rejected the piece message")
             await self._storage.record_uploaded_piece(piece_index, len(data))
+            if self._upload_start_time is None:
+                self._upload_start_time = time.monotonic()
+            self._uploaded_bytes += len(data)
             if self._logger:
                 self._logger.log_uploaded_piece(
                     piece_index,
@@ -383,6 +390,9 @@ class PeerConnection:
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop((piece_index, begin), None)
             return
+        if self._download_start_time is None:
+            self._download_start_time = time.monotonic()
+        self._downloaded_bytes += len(block_data)
 
         if self._logger:
             self._logger.log_received_block(piece_index, begin, len(block_data), f"{piece.get_received_byte_count()}/{piece.length}", f"{self._host}:{self._port}" )
@@ -529,9 +539,12 @@ class PeerConnection:
         async with self._requested_pieces_lock:
             self._requested_pieces.pop((piece_index, begin), None) 
 
-    async def is_choked(self) -> bool:
+    async def is_peer_choking(self) -> bool:
         return self._state.is_peer_choking()
-         
+
+    async def get_am_choking(self) -> bool:
+        return self._state.get_am_choking()
+    
     async def is_interested(self) -> bool:
         return self._state.is_am_interested()
      
@@ -587,4 +600,18 @@ class PeerConnection:
                 return await self.send_not_interested()
         return True
 
-    
+    def get_download_speed(self) -> float:
+        if self._download_start_time is None:
+            return 0.0
+        delta_time = time.monotonic() - self._download_start_time
+        if delta_time <= 0:
+            return 0.0
+        return self._downloaded_bytes / delta_time
+
+    def get_upload_speed(self) -> float:
+        if self._upload_start_time is None:
+            return 0.0
+        delta_time = time.monotonic() - self._upload_start_time
+        if delta_time <= 0:
+            return 0.0
+        return self._uploaded_bytes / delta_time

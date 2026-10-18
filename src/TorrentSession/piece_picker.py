@@ -8,7 +8,7 @@ async def select_next_piece(bitfield: bytes, piece_count: int, peers: list[PeerC
     piece_occs = [0] * piece_count
     
     for peer in peers:
-        if not await peer.is_connected() or await peer.is_choked():
+        if not await peer.is_connected() or await peer.is_peer_choking():
             continue
 
         peer_bitfield = await peer.get_bitfield()

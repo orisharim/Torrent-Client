@@ -442,7 +442,7 @@ class TorrentSession:
     async def _send_block_requests(self, piece: Piece, peers: list[PeerConnection], assigned_peers: dict[int, set[PeerConnection]], pending_requests: dict[int, tuple[PeerConnection, float]], peer_index: int ) -> int:
         active_peers = []
         for peer in peers:
-            if await peer.is_connected() and not await peer.is_choked():
+            if await peer.is_connected() and not await peer.is_peer_choking():
                 active_peers.append(peer)
 
         now = time.monotonic()
