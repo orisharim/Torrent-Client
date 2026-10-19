@@ -285,13 +285,9 @@ class PeerConnection:
 
     async def _on_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(True)
-        if self._state.get_am_seeding():
-            await self.send_unchoke()
 
     async def _on_not_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(False)
-        if self._state.get_am_seeding():
-            await self.send_choke()
 
     async def _on_have(self, payload: bytes) -> None:
         piece_index = protocol_encoder.unpack_have_payload(payload)
@@ -356,7 +352,6 @@ class PeerConnection:
 
     async def start_seeding(self):
         self._state.set_am_seeding(True)
-        return await self.send_unchoke()
 
     async def stop_seeding(self):
         self._state.set_am_seeding(False)
@@ -547,6 +542,9 @@ class PeerConnection:
     
     async def is_interested(self) -> bool:
         return self._state.is_am_interested()
+
+    def is_peer_interested(self) -> bool:
+        return self._state.is_peer_interested()
      
     async def is_connected(self) -> bool:
         return (self._reader is not None and 
