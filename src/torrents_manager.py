@@ -5,10 +5,10 @@ import shutil
 from pathlib import Path
 import peers_receiver
 from TorrentSession.peers.peers import Peers
-from port_forward import forward_port
-from port_forward import delete_port
+from utils.port_forward import forward_port
+from utils.port_forward import delete_port
 from TorrentSession.torrent_session import TorrentSession
-from Torrent.torrent_file import TorrentFile
+from TorrentSession.torrent_file import TorrentFile
 from TorrentSession.torrent_storage import TorrentStorage
 from torrent_settings import GlobalTorrentSettings, TorrentSettings
 import system_storage

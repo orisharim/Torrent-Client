@@ -6,7 +6,7 @@ import urllib.request
 import urllib.error
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from Torrent.bencode import decode_bencode
+from utils.bencode import decode_bencode
 from TorrentSession.session_logger import SessionLogger
 from TorrentSession.session_logger import SessionLogger
 

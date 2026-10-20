@@ -6,7 +6,7 @@ from typing import List, Tuple
 from typing_extensions import Optional
 
 from torrent_settings import TorrentSettings
-from Torrent.torrent_file import TorrentFile
+from TorrentSession.torrent_file import TorrentFile
 from TorrentSession.peers.peer_connection import PeerConnection
 from TorrentSession.torrent_storage import TorrentStorage
 from TorrentSession.session_logger import SessionLogger

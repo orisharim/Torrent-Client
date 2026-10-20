@@ -5,7 +5,7 @@ import urllib.parse
 import urllib.request
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from Torrent.bencode import decode_bencode
+from utils.bencode import decode_bencode
 from TorrentSession.peers.peers import Peers
 from TorrentSession.torrent_storage import TorrentStorage
 from TorrentSession.session_logger import SessionLogger

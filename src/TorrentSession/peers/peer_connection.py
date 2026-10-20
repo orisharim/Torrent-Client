@@ -6,6 +6,7 @@ import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from TorrentSession.piece import Piece
 from TorrentSession.torrent_storage import TorrentStorage
 from TorrentSession.session_logger import SessionLogger
+from utils.speed_estimator import SpeedEstimator
 
 class PeerConnection:
     CONNECTION_TIMEOUT = 20.0
@@ -36,10 +37,8 @@ class PeerConnection:
         self._upload_tasks: dict[tuple[int,int], tuple[asyncio.Task, float]] = {} # (piece_index, begin), (task, timestamp)
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._requested_pieces: dict[tuple[int, int], tuple[Piece, float]] = {} # (piece_index, begin), (piece, timestamp)
-        self._downloaded_bytes = 0
-        self._uploaded_bytes = 0
-        self._download_start_time: Optional[float] = None
-        self._upload_start_time: Optional[float] = None
+        self._download_speed_estimator = SpeedEstimator()
+        self._upload_speed_estimator = SpeedEstimator()
 
         self._write_lock = asyncio.Lock()
         self._upload_tasks_lock = asyncio.Lock()
@@ -331,9 +330,7 @@ class PeerConnection:
             if not await self.send_message(self.MESSAGE_PIECE, payload):
                 raise ConnectionError("peer rejected the piece message")
             await self._storage.record_uploaded_piece(piece_index, len(data))
-            if self._upload_start_time is None:
-                self._upload_start_time = time.monotonic()
-            self._uploaded_bytes += len(data)
+            self._upload_speed_estimator.add_measurement(len(data), time.monotonic())
             if self._logger:
                 self._logger.log_uploaded_piece(
                     piece_index,
@@ -385,9 +382,7 @@ class PeerConnection:
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop((piece_index, begin), None)
             return
-        if self._download_start_time is None:
-            self._download_start_time = time.monotonic()
-        self._downloaded_bytes += len(block_data)
+        self._download_speed_estimator.add_measurement(len(block_data), time.monotonic())
 
         if self._logger:
             self._logger.log_received_block(piece_index, begin, len(block_data), f"{piece.get_received_byte_count()}/{piece.length}", f"{self._host}:{self._port}" )
@@ -599,17 +594,7 @@ class PeerConnection:
         return True
 
     def get_download_speed(self) -> float:
-        if self._download_start_time is None:
-            return 0.0
-        delta_time = time.monotonic() - self._download_start_time
-        if delta_time <= 0:
-            return 0.0
-        return self._downloaded_bytes / delta_time
+        return self._download_speed_estimator.get_estimated_speed(time.monotonic())
 
     def get_upload_speed(self) -> float:
-        if self._upload_start_time is None:
-            return 0.0
-        delta_time = time.monotonic() - self._upload_start_time
-        if delta_time <= 0:
-            return 0.0
-        return self._uploaded_bytes / delta_time
+        return self._upload_speed_estimator.get_estimated_speed(time.monotonic())

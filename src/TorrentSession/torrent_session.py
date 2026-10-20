@@ -7,7 +7,7 @@ import time
 from typing import Optional
 from TorrentSession.piece import Piece
 from TorrentSession.torrent_storage import TorrentStorage
-from Torrent.torrent_file import TorrentFile
+from TorrentSession.torrent_file import TorrentFile
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
@@ -15,6 +15,7 @@ from TorrentSession.peers.peer_connection import PeerConnection
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from torrent_settings import TorrentSettings
 from TorrentSession import piece_picker
+from utils.speed_estimator import SpeedEstimator
 
 class TorrentSession:
     DOWNLOAD_BACKGROUND_INTERVAL = 30.0
@@ -67,8 +68,12 @@ class TorrentSession:
         
         self._calculate_download_speed_task: Optional[asyncio.Task] = None
         self._last_downloaded_piece_amount: int = 0
+        self._last_uploaded_byte_amount: int = 0
         self._last_download_time: float = time.monotonic()
         self._current_download_speed: float = 0.0
+        self._current_upload_speed: float = 0.0
+        self._download_speed_estimator = SpeedEstimator()
+        self._upload_speed_estimator = SpeedEstimator()
 
     async def close_all(self) -> None:
         await self.stop_downloads()
@@ -114,7 +119,7 @@ class TorrentSession:
                 unchoked_peers = await self._peers.get_unchoked_peers()
                 self._download_tasks = []
                 for _ in range(max(self.MAX_IN_FLIGHT_PIECES, len(unchoked_peers))):
-                    self._download_tasks.append(asyncio.create_task(self._download_loop()))
+                    self._download_tasks.append(asyncio.create_task(self._download_piece_loop()))
             
             except asyncio.CancelledError:
                 raise
@@ -130,7 +135,7 @@ class TorrentSession:
 
         self._start_downloads_task = asyncio.create_task(start_download_tasks())
 
-    async def _download_loop(self):
+    async def _download_piece_loop(self):
         try:
             while self._is_downloading and not await self.is_complete():
                 downloaded_piece = await self._download_piece()    
@@ -220,7 +225,7 @@ class TorrentSession:
             unchoked_peers = await self._peers.get_unchoked_peers()
             if len(self._download_tasks) < max(self.MAX_IN_FLIGHT_PIECES, len(unchoked_peers)):
                 for _ in range(max(self.MAX_IN_FLIGHT_PIECES, len(unchoked_peers)) - len(self._download_tasks)):
-                    self._download_tasks.append(asyncio.create_task(self._download_loop()))
+                    self._download_tasks.append(asyncio.create_task(self._download_piece_loop()))
             await asyncio.sleep(self.DOWNLOAD_BACKGROUND_INTERVAL)
            
             
@@ -237,24 +242,40 @@ class TorrentSession:
             self._torrent_storage.get_piece_length(piece_index)
             for piece_index in downloaded_pieces
         )
-        while self._is_downloading:
+        self._last_uploaded_byte_amount = await self._torrent_storage.get_uploaded_bytes()
+        while self._is_downloading or self._is_seeding:
             await asyncio.sleep(1.0)
             downloaded_pieces = await self._torrent_storage.get_downloaded_pieces()
             downloaded_bytes = sum(
                 self._torrent_storage.get_piece_length(piece_index)
                 for piece_index in downloaded_pieces
             )
+            uploaded_bytes = await self._torrent_storage.get_uploaded_bytes()
             now = time.monotonic()
             download_time = now - self._last_download_time
             if download_time > 0:
                 downloaded_bytes_difference = downloaded_bytes - self._last_downloaded_piece_amount
-                download_speed = max(0.0, downloaded_bytes_difference / download_time / (1024 * 1024))
-                self._current_download_speed = download_speed
-                self._logger.log_download_speed(download_speed)
+                uploaded_bytes_difference = uploaded_bytes - self._last_uploaded_byte_amount
+                if downloaded_bytes_difference > 0:
+                    self._download_speed_estimator.add_measurement(
+                        downloaded_bytes_difference,
+                        now,
+                    )
+                if uploaded_bytes_difference > 0:
+                    self._upload_speed_estimator.add_measurement(
+                        uploaded_bytes_difference,
+                        now,
+                    )
+                self._current_download_speed = self._download_speed_estimator.get_estimated_speed(now)
+                self._current_upload_speed = self._upload_speed_estimator.get_estimated_speed(now)
+                self._logger.log_download_speed(self._current_download_speed / (1024 * 1024))
+                self._logger.log_upload_speed(self._current_upload_speed / (1024 * 1024))
                 self._last_downloaded_piece_amount = downloaded_bytes
+                self._last_uploaded_byte_amount = uploaded_bytes
                 self._last_download_time = now
 
         self._current_download_speed = 0.0
+        self._current_upload_speed = 0.0
 
     async def stop_downloads(self):
         async with self._stop_lock:
@@ -273,8 +294,9 @@ class TorrentSession:
                 await self._cancel_task(self._log_status_task)
                 self._log_status_task = None
 
-            await self._cancel_task(self._calculate_download_speed_task)
-            self._calculate_download_speed_task = None
+            if not self._is_seeding:
+                await self._cancel_task(self._calculate_download_speed_task)
+                self._calculate_download_speed_task = None
 
             await self._cancel_task(self._download_background_task)
             self._download_background_task = None
@@ -336,6 +358,9 @@ class TorrentSession:
     async def stop_seeding(self):
         await self._peers.stop_seeding()
         self._is_seeding = False
+        if not self._is_downloading:
+            await self._cancel_task(self._calculate_download_speed_task)
+            self._calculate_download_speed_task = None
         if not self._is_downloading and self._log_status_task is not None:
             self._log_status_task.cancel()
             try:
@@ -347,6 +372,8 @@ class TorrentSession:
     async def start_seeding(self):
         self._is_seeding = True
         await self._peers.start_seeding()
+        if self._calculate_download_speed_task is None:
+            self._calculate_download_speed_task = asyncio.create_task(self._calculate_download_speed())
 
     def is_seeding(self) -> bool:
         return self._is_seeding
@@ -497,6 +524,7 @@ class TorrentSession:
         connection_status = await self._peers.get_connection_status()
         return {
             "download_speed" : self._current_download_speed,
+            "upload_speed": self._current_upload_speed,
             "downloaded_pieces": downloaded_piece_count,
             "total_pieces": total_pieces,
             "is_downloading": self._is_downloading,
