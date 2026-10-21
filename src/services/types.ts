@@ -1,15 +1,5 @@
 export type TorrentStatus = "Downloading" | "Paused" | "Completed" | "Seeding";
 
-export type SearchResult = {
-  id: number;
-  name: string;
-  size: number; 
-  seeds: number;
-  peers: number;
-  source: string;
-  magnet: string;
-};
-
 
 // golbal setting only (flask has 3 fields)
 export type GlobalSettings = {

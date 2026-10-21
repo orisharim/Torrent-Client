@@ -5,10 +5,12 @@ import type { TorrentStatus } from "../services/types";
 export type Torrent = {
   id: string; // info_hash
   name: string;
-  size: number; // TODO: backend doesn't report a byte size yet — always 0 for now
+  size: number; // GB
   progress: number; // 0-100
   speed: number; // MB/s
   status: TorrentStatus;
+  isDownloading: boolean;
+  isSeeding: boolean;
   peers: number;
 };
 
@@ -25,6 +27,7 @@ type TorrentContextType = {
   pauseSelected: () => void;
   deleteTorrents: (ids: string[]) => void;
   updateTorrentStatus: (id: string, status: TorrentStatus) => void;
+  setTorrentFlags: (id: string, isDownloading: boolean, isSeeding: boolean) => void;
   clearCompleted: () => void;
 };
 
@@ -41,6 +44,7 @@ const TorrentContext = createContext<TorrentContextType>({
   pauseSelected: () => {},
   deleteTorrents: () => {},
   updateTorrentStatus: () => {},
+  setTorrentFlags: () => {},
   clearCompleted: () => {},
 });
 
@@ -69,10 +73,12 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
   const torrents = useMemo<Torrent[]>(() => rawTorrents.map((t) => ({
     id: t.info_hash,
     name: torrentName(t.torrentFilePath),
-    size: 0,
+    size: (t.total_size ?? 0) / 1024 ** 3,
     progress: t.total_pieces > 0 ? (t.downloaded_pieces / t.total_pieces) * 100 : 0,
-    speed: t.download_speed,
+    speed: Math.round(t.download_speed * 100) / 100,
     status: deriveStatus(t),
+    isDownloading: t.is_downloading,
+    isSeeding: t.is_seeding,
     peers: t.connected_peers,
   })), [rawTorrents]);
 
@@ -130,6 +136,11 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
     }
   }, [resumeTorrent, pauseTorrent, findByInfoHash, setStatus]);
 
+  const setTorrentFlags = useCallback((id: string, isDownloading: boolean, isSeeding: boolean) => {
+    const raw = findByInfoHash(id);
+    if (raw) setStatus(id, raw.download_path, isDownloading, isSeeding);
+  }, [findByInfoHash, setStatus]);
+
   const clearCompleted = useCallback(() => {
     rawTorrents
       .filter((t) => !t.is_downloading && !t.is_seeding && t.total_pieces > 0 && t.downloaded_pieces >= t.total_pieces)
@@ -142,7 +153,7 @@ export const TorrentProvider = ({ children }: { children: React.ReactNode }) => 
         torrents, loading,
         selected, setSelected, toggleSelect,
         addTorrent, pauseTorrent, resumeTorrent, pauseAll, pauseSelected,
-        deleteTorrents, updateTorrentStatus, clearCompleted,
+        deleteTorrents, updateTorrentStatus, setTorrentFlags, clearCompleted,
       }}
     >
       {children}

@@ -1,8 +1,6 @@
 import Toolbar from "../ToolBar/Toolbar";
 import { HomePage } from "../Views/HomePage";
-import { TorrentPage } from "../Views/TorrentPage";
 import { SettingsPage } from "../Views/SettingsPage";
-import { SearchPage } from "../Views/SearchPage";
 import { TorrentTable } from "./TorrentTable";
 import { AddTorrentDialog } from "../Dialogs/AddTorrentDialog";
 import { ToastViewport } from "../UI/Toast";
@@ -20,10 +18,6 @@ export const Dashboard = () => {
       </div>
 
       {page === "home" && <HomePage />}
-
-      {page === "torrent" && <TorrentPage />}
-
-      {page === "search" && <SearchPage />}
 
       {page === "settings" && <SettingsPage onClose={() => setPage("home")} />}
 

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from "react";
 
-export type Page = "home" | "torrent" | "settings" | "search";
+export type Page = "home" | "settings";
 export type AddDialogTab = "magnet" | "file";
 
 export type Toast = {
@@ -14,8 +14,6 @@ type UIContextType = {
   setPage: (page: Page) => void;
   filterText: string;
   setFilterText: (text: string) => void;
-  searchQuery: string;
-  submitSearch: (query: string) => void;
   addDialog: { open: boolean; tab: AddDialogTab };
   openAddDialog: (tab?: AddDialogTab) => void;
   closeAddDialog: () => void;
@@ -28,8 +26,6 @@ const UIContext = createContext<UIContextType>({
   setPage: () => {},
   filterText: "",
   setFilterText: () => {},
-  searchQuery: "",
-  submitSearch: () => {},
   addDialog: { open: false, tab: "magnet" },
   openAddDialog: () => {},
   closeAddDialog: () => {},
@@ -42,15 +38,9 @@ export const useUI = () => useContext(UIContext);
 export const UIProvider = ({ children }: { children: React.ReactNode }) => {
   const [page, setPage] = useState<Page>("home");
   const [filterText, setFilterText] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [addDialog, setAddDialog] = useState<{ open: boolean; tab: AddDialogTab }>({ open: false, tab: "magnet" });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
-
-  const submitSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-    setPage("search");
-  }, []);
 
   const openAddDialog = useCallback((tab: AddDialogTab = "magnet") => {
     setAddDialog({ open: true, tab });
@@ -73,7 +63,6 @@ export const UIProvider = ({ children }: { children: React.ReactNode }) => {
       value={{
         page, setPage,
         filterText, setFilterText,
-        searchQuery, submitSearch,
         addDialog, openAddDialog, closeAddDialog,
         toasts, showToast,
       }}

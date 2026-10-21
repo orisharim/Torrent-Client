@@ -1,5 +1,4 @@
 import {
-  Plus,
   Link,
   Square,
   Trash2,
@@ -12,12 +11,13 @@ import { useEffect, useRef, useState } from "react";
 import { useTheme } from "../../context/ThemeContext";
 import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
+import Button from "../UI/Button";
 import ConfirmDialog from "../UI/ConfirmDialog";
 
 const Toolbar = () => {
   const { theme, setTheme } = useTheme();
   const { torrents, selected, pauseAll, deleteTorrents } = useTorrents();
-  const { filterText, setFilterText, submitSearch, openAddDialog, showToast } = useUI();
+  const { filterText, setFilterText, openAddDialog, showToast } = useUI();
 
   const [confirmRemove, setConfirmRemove] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -48,9 +48,7 @@ const Toolbar = () => {
   };
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" && filterText.trim() !== "") {
-      submitSearch(filterText.trim());
-    } else if (event.key === "Escape") {
+    if (event.key === "Escape") {
       setFilterText("");
       searchRef.current?.blur();
     }
@@ -59,13 +57,7 @@ const Toolbar = () => {
   return (
     <div className="sticky top-0 z-40 w-full h-16 bg-blue-100 dark:bg-stone-900 border-b border-blue-200 dark:border-blue-900 px-4 py-2 flex flex-nowrap items-center gap-2">
 
-      <button
-        onClick={() => openAddDialog("magnet")}
-        className="flex font-bold items-center gap-2 px-3 py-2 text-sm transition text-stone-800 dark:text-stone-200 hover:bg-blue-200 dark:hover:bg-blue-900 rounded"
-      >
-        <Plus size={20} className="font-bold" />
-        <span className="hidden sm:inline">Add Torrent</span>
-      </button>
+      <Button text="Add Torrent" variant="primary" action={() => openAddDialog("magnet")} />
 
       <ToolbarButton
         icon={<Link size={16} />}
@@ -100,7 +92,7 @@ const Toolbar = () => {
             onChange={(e) => setFilterText(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search..."
-            title="Type to filter — press Enter to search for new torrents"
+            title="Type to filter your torrents"
             className="w-full min-w-0 text-sm bg-transparent outline-none text-stone-800 dark:text-stone-100 placeholder:text-stone-400 dark:placeholder:text-stone-500"
           />
           {filterText !== "" && (

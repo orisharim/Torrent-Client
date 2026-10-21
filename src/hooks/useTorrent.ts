@@ -1,5 +1,6 @@
-import { API_BASE, encodePath, toBackendPath } from "../services/backend";
+import { API_BASE, encodePath } from "../services/backend";
 import { useEffect, useRef, useState } from "react";
+import { getStartDownloadingOnAdd } from "../services/preferences";
 
 const POLL_INTERVAL_MS = 500; 
 
@@ -11,6 +12,7 @@ interface Torrent {
     download_speed: number;
     downloaded_pieces: number;
     total_pieces: number;
+    total_size: number;
     is_downloading: boolean;
     is_seeding: boolean;
     connected_peers: number;
@@ -53,6 +55,7 @@ const getTorrentStatus = async(info_hash : string, download_path : string) : Pro
         download_speed: number,
         downloaded_pieces: number,
         total_pieces: number,
+        total_size: number,
         connected_peers: number
     }>(response);
 
@@ -83,8 +86,6 @@ const postAddTorrent = async(
     torrentFilePath : string, 
     downloadPath : string,
     settings?: any) : Promise<{info_hash : string}> => {
-        torrentFilePath = toBackendPath(torrentFilePath);
-        downloadPath = toBackendPath(downloadPath);
         const response = await fetch(`${API_BASE}/torrents` , {
             method : "POST",
             headers : jsonHeaders,
@@ -188,8 +189,11 @@ export function useTorrent(){
     const addTorrent = async(torrentFilePath : string , downloadPath : string) : Promise<void> => {
         const result = await postAddTorrent(torrentFilePath, downloadPath);
         saveName(result.info_hash, torrentFilePath);
-        const status = await getTorrentStatus(result.info_hash, toBackendPath(downloadPath));
+        const status = await getTorrentStatus(result.info_hash, downloadPath);
         setTorrents((prev) => [status , ...prev.filter((t) => t.info_hash !== result.info_hash)]);
+        if (getStartDownloadingOnAdd()) {
+            void applyStatus(result.info_hash, downloadPath, true, false);
+        }
     }
 
     // optimistic update, then sync with the backend's real state once the request settles

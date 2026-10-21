@@ -1,4 +1,4 @@
-import { Plus, Link, Download, Upload, Activity, Share2 } from "lucide-react";
+import { Plus, Link, Upload, Activity, Share2, Users } from "lucide-react";
 import Button from "../UI/Button";
 import PageHeader from "../UI/PageHeader";
 import StatCard from "../UI/StatCard";
@@ -11,18 +11,16 @@ export const HomePage = () => {
 
   const activeTorrents = torrents.filter((t) => t.status === "Downloading").length;
   const seedingTorrents = torrents.filter((t) => t.status === "Seeding").length;
-  const downloadSpeed = torrents
-    .filter((t) => t.status === "Downloading")
-    .reduce((sum, t) => sum + t.speed, 0);
+  const totalPeers = torrents.reduce((sum, t) => sum + t.peers, 0);
 
   // TODO: backend doesn't report an upload speed anywhere in the torrent status payload yet — always 0 until it does
   const uploadSpeed = 0;
 
   const stats = [
-    { label: "Download", value: `${downloadSpeed.toFixed(1)} MB/s`, icon: <Download className="w-5 h-5" /> },
-    { label: "Upload", value: `${uploadSpeed.toFixed(1)} MB/s`, icon: <Upload className="w-5 h-5" /> },
+    { label: "Upload", value: `${uploadSpeed.toFixed(2)} MB/s`, icon: <Upload className="w-5 h-5" /> },
     { label: "Active", value: activeTorrents, icon: <Activity className="w-5 h-5" /> },
     { label: "Seeding", value: seedingTorrents, icon: <Share2 className="w-5 h-5" /> },
+    { label: "Peers", value: totalPeers, icon: <Users className="w-5 h-5" /> },
   ];
 
   return (

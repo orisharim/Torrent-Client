@@ -2,13 +2,11 @@ import { useMemo, useState } from "react";
 import { Download, MoreVertical, Pause, Play, Trash2, X } from "lucide-react";
 import { useTorrents, type Torrent } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
-import { statusStyles } from "../UI/badgeStyles";
 import Button from "../UI/Button";
 import ConfirmDialog from "../UI/ConfirmDialog";
 import EmptyState from "../UI/EmptyState";
 import Modal from "../UI/Modal";
 
-const editableStatuses = ["Downloading", "Paused", "Seeding"] as const;
 const statusPriority: Record<Torrent["status"], number> = {
   Downloading: 0,
   Seeding: 1,
@@ -37,8 +35,8 @@ export const TorrentTable = () => {
   const {
     torrents, loading,
     selected, setSelected, toggleSelect,
-    pauseTorrent, resumeTorrent, pauseSelected,
-    deleteTorrents, updateTorrentStatus,
+    pauseTorrent, resumeTorrent,
+    deleteTorrents, setTorrentFlags,
   } = useTorrents();
   const { filterText, openAddDialog } = useUI();
 
@@ -64,32 +62,6 @@ export const TorrentTable = () => {
 
   return (
     <div className="bg-white dark:bg-stone-800 border border-blue-100 dark:border-blue-900 rounded-2xl overflow-hidden shadow-sm">
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 bg-blue-50 dark:bg-blue-950 border-b border-blue-100 dark:border-blue-900">
-          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selected.size} selected</span>
-          <button
-            onClick={pauseSelected}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/40 transition-colors"
-          >
-            <Pause size={12} />
-            Pause
-          </button>
-          <button
-            onClick={() => setPendingDelete([...selected])}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-          >
-            <Trash2 size={12} />
-            Delete
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="ms-auto text-xs text-blue-400 dark:text-blue-500 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
       {loading ? (
         <EmptyState title="Loading…" />
       ) : torrents.length === 0 ? (
@@ -117,7 +89,7 @@ export const TorrentTable = () => {
                   torrent={torrent}
                   selected={selected.has(torrent.id)}
                   onToggleSelect={toggleSelect}
-                  onUpdateStatus={updateTorrentStatus}
+                  onSetFlags={setTorrentFlags}
                   onOpenActions={setActionsFor}
                 />
               ))}
@@ -159,7 +131,7 @@ type TableHeadProps = {
 const TableHead = ({ allSelected, someSelected, onToggleAll }: TableHeadProps) => (
   <thead>
     <tr className="bg-blue-50 dark:bg-blue-950/60 text-xs font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide border-b border-blue-100 dark:border-blue-900">
-      <th className="px-4 py-3 w-12">
+      <th className="px-4 py-3 w-12 align-middle">
         <input
           type="checkbox"
           checked={allSelected}
@@ -168,13 +140,14 @@ const TableHead = ({ allSelected, someSelected, onToggleAll }: TableHeadProps) =
           className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
         />
       </th>
-      <th className="text-start px-4 py-3 w-[24%]">Name</th>
+      <th className="text-start px-4 py-3 w-[22%]">Name</th>
       <th className="text-start px-4 py-3 w-[9%] whitespace-nowrap">Size</th>
       <th className="text-start px-4 py-3 w-[16%]">Progress</th>
       <th className="text-start px-4 py-3 w-[11%] whitespace-nowrap hidden sm:table-cell">Speed</th>
       <th className="text-start px-4 py-3 w-[9%] whitespace-nowrap hidden lg:table-cell">ETA</th>
-      <th className="text-start px-4 py-3 w-[13%]">Status</th>
-      <th className="text-start px-4 py-3 w-16">Actions</th>
+      <th className="px-3 py-3 w-[12%] whitespace-nowrap text-center">Downloading</th>
+      <th className="px-3 py-3 w-[9%] whitespace-nowrap text-center">Seeding</th>
+      <th className="text-center px-2 py-3 w-20">Actions</th>
     </tr>
   </thead>
 );
@@ -184,12 +157,11 @@ type TableRowProps = {
   torrent: Torrent;
   selected: boolean;
   onToggleSelect: (id: string) => void;
-  onUpdateStatus: (id: string, status: Torrent["status"]) => void;
+  onSetFlags: (id: string, isDownloading: boolean, isSeeding: boolean) => void;
   onOpenActions: (torrent: Torrent) => void;
 };
 
-const TableRow = ({ index, torrent, selected, onToggleSelect, onUpdateStatus, onOpenActions }: TableRowProps) => {
-  const [isEditing, setIsEditing] = useState(false);
+const TableRow = ({ index, torrent, selected, onToggleSelect, onSetFlags, onOpenActions }: TableRowProps) => {
   return (
   <tr className={`text-sm border-b border-blue-50 dark:border-blue-900/50 last:border-0 transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-900/20 ${selected ? "bg-blue-50 dark:bg-blue-900/30" : index % 2 ? "bg-blue-50/30 dark:bg-blue-950/20" : "bg-white dark:bg-stone-800"}`}>
     <td className="px-4 py-3">
@@ -204,7 +176,7 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onUpdateStatus, on
     <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-100">
       <div className="max-w-64 truncate" title={torrent.name}>{torrent.name}</div>
     </td>
-    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{torrent.size > 0 ? `${torrent.size} GB` : "—"}</td>
+    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{torrent.size > 0 ? `${torrent.size.toFixed(2)} GB` : "—"}</td>
 
     <td className="px-4 py-3">
       <div className="flex items-center gap-2">
@@ -219,45 +191,34 @@ const TableRow = ({ index, torrent, selected, onToggleSelect, onUpdateStatus, on
     </td>
 
     <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap hidden sm:table-cell">
-      {torrent.speed > 0 ? `${torrent.speed} MB/s` : "—"}
+      {torrent.speed > 0 ? `${torrent.speed.toFixed(2)} MB/s` : "—"}
     </td>
 
     <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap hidden lg:table-cell">
       {formatEstimatedTime(torrent)}
     </td>
 
-    <td className="px-4 py-3">
-      {isEditing ? (
-        <select
-          autoFocus
-          value={torrent.status}
-          onChange={(event) => {
-            onUpdateStatus(torrent.id, event.target.value as Torrent["status"]);
-            setIsEditing(false);
-          }}
-          onBlur={() => setIsEditing(false)}
-          className="w-full rounded-full border border-blue-200 dark:border-blue-700 bg-white dark:bg-stone-800 text-xs font-medium px-2.5 py-1 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {editableStatuses.map((status) => (
-            <option key={status} value={status}>{status}</option>
-          ))}
-        </select>
-      ) : torrent.status === "Completed" ? (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]}`}>
-          {torrent.status}
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setIsEditing(true)}
-          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[torrent.status]} hover:ring-1 hover:ring-blue-300 dark:hover:ring-blue-800 transition-all`}
-        >
-          {torrent.status}
-        </button>
-      )}
+    <td className="px-3 py-3 text-center">
+      <input
+        type="checkbox"
+        checked={torrent.isDownloading}
+        onChange={(event) => onSetFlags(torrent.id, event.target.checked, torrent.isSeeding)}
+        title="Downloading"
+        className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
+      />
     </td>
 
-    <td className="px-4 py-3">
+    <td className="px-3 py-3 text-center">
+      <input
+        type="checkbox"
+        checked={torrent.isSeeding}
+        onChange={(event) => onSetFlags(torrent.id, torrent.isDownloading, event.target.checked)}
+        title="Seeding"
+        className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500 cursor-pointer"
+      />
+    </td>
+
+    <td className="px-2 py-3 text-center">
       <button
         onClick={() => onOpenActions(torrent)}
         title="Actions"

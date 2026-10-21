@@ -1,4 +1,4 @@
-import { ArrowUpDown, Home, Settings } from "lucide-react";
+import { Home, Settings } from "lucide-react";
 import { useUI } from "../../context/UIContext";
 import type { Page } from "../../context/UIContext";
 
@@ -7,7 +7,6 @@ const Sidebar = () => {
 
   const navItems: { id: Page; label: string; icon: typeof Home }[] = [
     { id: "home", label: "Home", icon: Home },
-    { id: "torrent", label: "Torrent", icon: ArrowUpDown },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 

@@ -7,6 +7,7 @@ import Modal from "../UI/Modal";
 import Toggle from "../UI/Toggle";
 import { useSettings, DEFAULT_GLOBAL_SETTINGS } from "../../hooks/useSettings";
 import type { GlobalSettings } from "../../services/types";
+import { getStartDownloadingOnAdd, setStartDownloadingOnAdd } from "../../services/preferences";
 
 const Row = ({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) => (
   <div className="flex items-center justify-between gap-3">
@@ -34,6 +35,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const { settings: liveSettings, saveSettings, resetSettings } = useSettings();
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_GLOBAL_SETTINGS);
   const [saved, setSaved] = useState(false);
+  const [startOnAdd, setStartOnAdd] = useState(getStartDownloadingOnAdd);
 
   // adopt the server-loaded settings as the editable draft once, when they first arrive
   const [prevLiveSettings, setPrevLiveSettings] = useState(liveSettings);
@@ -48,6 +50,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   const handleSave = () => {
     saveSettings(settings); // REPLACE: await + error handling
+    setStartDownloadingOnAdd(startOnAdd);
     setSaved(true);
     showToast("Settings saved");
     setTimeout(() => { setSaved(false); onClose(); }, 1200);
@@ -56,6 +59,7 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const handleReset = () => {
     if (confirm("Reset all settings to defaults?")) {
       resetSettings().then(setSettings);
+      setStartOnAdd(true);
     }
   };
 
@@ -93,6 +97,12 @@ export const SettingsPage = ({ onClose }: SettingsPageProps) => {
             <p className="text-xs text-stone-400 dark:text-stone-500">
               Connection limits and speed limits are per-torrent — configure them when adding a torrent.
             </p>
+          </Section>
+
+          <Section title="Adding torrents">
+            <Row label="Start downloading when added" sub="Turn off to add torrents paused">
+              <Toggle checked={startOnAdd} onChange={setStartOnAdd} />
+            </Row>
           </Section>
 
           <DangerZone onReset={handleReset} />
