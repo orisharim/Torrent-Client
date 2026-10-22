@@ -5,6 +5,7 @@ import {
   Search,
   Sun,
   Moon,
+  Settings,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -17,7 +18,7 @@ import ConfirmDialog from "../UI/ConfirmDialog";
 const Toolbar = () => {
   const { theme, setTheme } = useTheme();
   const { torrents, selected, pauseAll, deleteTorrents } = useTorrents();
-  const { filterText, setFilterText, openAddDialog, showToast } = useUI();
+  const { filterText, setFilterText, openAddDialog, showToast, setPage } = useUI();
 
   const [confirmRemove, setConfirmRemove] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -112,6 +113,14 @@ const Toolbar = () => {
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-blue-200 dark:border-blue-800 bg-white dark:bg-stone-800 text-stone-600 dark:text-stone-200 hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors"
         >
           {theme === "Dark" ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPage("settings")}
+          title="Settings"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-blue-200 dark:border-blue-800 bg-white dark:bg-stone-800 text-stone-600 dark:text-stone-200 hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors"
+        >
+          <Settings size={18} />
         </button>
       </div>
 
