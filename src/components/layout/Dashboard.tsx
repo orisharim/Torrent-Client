@@ -1,9 +1,9 @@
-import Toolbar from "../ToolBar/Toolbar";
-import { HomePage } from "../Views/HomePage";
-import { SettingsPage } from "../Views/SettingsPage";
-import { TorrentTable } from "./TorrentTable";
-import { AddTorrentDialog } from "../Dialogs/AddTorrentDialog";
-import { ToastViewport } from "../UI/Toast";
+import Toolbar from "./Toolbar";
+import { HomePage } from "../pages/HomePage";
+import { SettingsPage } from "../pages/SettingsPage";
+import { TorrentTable } from "../torrents/TorrentTable";
+import { AddTorrentDialog } from "../torrents/AddTorrentDialog";
+import { ToastViewport } from "../ui/Toast";
 import { useUI } from "../../context/UIContext";
 
 export const Dashboard = () => {

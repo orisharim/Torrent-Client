@@ -12,8 +12,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTheme } from "../../context/ThemeContext";
 import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
-import Button from "../UI/Button";
-import ConfirmDialog from "../UI/ConfirmDialog";
+import Button from "../ui/Button";
+import ConfirmDialog from "../ui/ConfirmDialog";
 
 const Toolbar = () => {
   const { theme, setTheme } = useTheme();

@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import { Download, MoreVertical, Pause, Play, Trash2, X } from "lucide-react";
 import { useTorrents, type Torrent } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
-import Button from "../UI/Button";
-import ConfirmDialog from "../UI/ConfirmDialog";
-import EmptyState from "../UI/EmptyState";
-import Modal from "../UI/Modal";
+import Button from "../ui/Button";
+import ConfirmDialog from "../ui/ConfirmDialog";
+import EmptyState from "../ui/EmptyState";
+import Modal from "../ui/Modal";
 
 const statusPriority: Record<Torrent["status"], number> = {
   Downloading: 0,

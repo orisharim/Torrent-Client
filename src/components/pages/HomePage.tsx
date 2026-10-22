@@ -1,7 +1,7 @@
 import { Plus, Link, Upload, Activity, Share2, Users } from "lucide-react";
-import Button from "../UI/Button";
-import PageHeader from "../UI/PageHeader";
-import StatCard from "../UI/StatCard";
+import Button from "../ui/Button";
+import PageHeader from "../ui/PageHeader";
+import StatCard from "../ui/StatCard";
 import { useUI } from "../../context/UIContext";
 import { useTorrents } from "../../context/TorrentContext";
 

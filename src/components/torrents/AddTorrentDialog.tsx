@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileUp, FolderOpen, Link, X } from "lucide-react";
-import Modal from "../UI/Modal";
-import Button from "../UI/Button";
+import Modal from "../ui/Modal";
+import Button from "../ui/Button";
 import { useTorrents } from "../../context/TorrentContext";
 import { useUI } from "../../context/UIContext";
 import type { AddDialogTab } from "../../context/UIContext";
