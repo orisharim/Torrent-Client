@@ -1,15 +1,14 @@
 from dataclasses import dataclass
 import asyncio
-
 from random import choice
 from typing import List, Tuple
 from typing_extensions import Optional
 
-from torrent_settings import TorrentSettings
-from TorrentSession.torrent_file import TorrentFile
-from TorrentSession.peers.peer_connection import PeerConnection
-from TorrentSession.torrent_storage import TorrentStorage
-from TorrentSession.session_logger import SessionLogger
+from src.TorrentSession.peers.peer_connection import PeerConnection
+from src.TorrentSession.session_logger import SessionLogger
+from src.TorrentSession.torrent_file import TorrentFile
+from src.TorrentSession.torrent_storage import TorrentStorage
+from src.torrent_settings import TorrentSettings
 
 
 @dataclass

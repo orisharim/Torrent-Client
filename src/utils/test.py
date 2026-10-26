@@ -1,7 +1,8 @@
 import asyncio
-import torrents_manager
 
-     
+import src.torrents_manager as torrents_manager
+
+
 async def main():
 
     torrent_settings = torrents_manager.TorrentSettings()
@@ -12,11 +13,8 @@ async def main():
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, "/home/ori/Desktop/torrentsfortest/ubuntu1", torrent_settings)
-        res = await torrents_manager.add_new_torrent(torrent_file_path, "/home/ori/Desktop/torrentsfortest/ubuntu2", torrent_settings)
         print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
         await torrents_manager.change_torrent_status(info_hash, "/home/ori/Desktop/torrentsfortest/ubuntu1", is_downloading=True, is_seeding=True)
-        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
-        await torrents_manager.change_torrent_status(info_hash, "/home/ori/Desktop/torrentsfortest/ubuntu2", is_downloading=True, is_seeding=True)
         print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
 
         if res:

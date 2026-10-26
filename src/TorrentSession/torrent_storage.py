@@ -1,12 +1,13 @@
-from hashlib import sha1
-from pathlib import Path
-from typing import Optional
 import asyncio
 import fcntl
 import os
-from TorrentSession.torrent_file import TorrentFile
-import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
-from TorrentSession.session_logger import SessionLogger
+from hashlib import sha1
+from pathlib import Path
+from typing import Optional
+
+from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
+from src.TorrentSession.session_logger import SessionLogger
+from src.TorrentSession.torrent_file import TorrentFile
 
 
 

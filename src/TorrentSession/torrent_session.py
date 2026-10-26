@@ -1,21 +1,21 @@
 
-from TorrentSession import torrent_storage
-from TorrentSession.tracker_client import TrackerClient
-from TorrentSession.peers.peers import Peers
-from TorrentSession.session_logger import SessionLogger
-import time
-from typing import Optional
-from TorrentSession.piece import Piece
-from TorrentSession.torrent_storage import TorrentStorage
-from TorrentSession.torrent_file import TorrentFile
 import asyncio
 from asyncio import TaskGroup
 from hashlib import sha1
-from TorrentSession.peers.peer_connection import PeerConnection
-import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
-from torrent_settings import TorrentSettings
-from TorrentSession import piece_picker
-from utils.speed_estimator import SpeedEstimator
+import time
+from typing import Optional
+
+from src.TorrentSession import piece_picker, torrent_storage
+from src.TorrentSession.peers.peer_connection import PeerConnection
+from src.TorrentSession.peers.peers import Peers
+from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
+from src.TorrentSession.piece import Piece
+from src.TorrentSession.session_logger import SessionLogger
+from src.TorrentSession.torrent_file import TorrentFile
+from src.TorrentSession.torrent_storage import TorrentStorage
+from src.TorrentSession.tracker_client import TrackerClient
+from src.torrent_settings import TorrentSettings
+from src.utils.speed_estimator import SpeedEstimator
 
 class TorrentSession:
     DOWNLOAD_BACKGROUND_INTERVAL = 30.0
@@ -562,6 +562,9 @@ class TorrentSession:
             await self._start_trackers()
         self._torrent_settings = torrent_settings
         
+
+    def get_settings(self) -> TorrentSettings:
+        return self._torrent_settings
 
     def get_torrent_metadata(self) -> TorrentFile:
         return self._torrent_metadata

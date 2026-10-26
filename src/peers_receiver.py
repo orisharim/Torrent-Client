@@ -1,8 +1,9 @@
 
 import asyncio
-import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
-from TorrentSession.peers.peers import Peers
-from system_logger import SystemLogger
+
+from src.TorrentSession.peers.peers import Peers
+from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
+from src.system_logger import SystemLogger
 
 LISTENING_PORT = 6881
 server: asyncio.Server | None = None

@@ -6,9 +6,9 @@ import urllib.request
 import urllib.error
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from utils.bencode import decode_bencode
-from TorrentSession.session_logger import SessionLogger
-from TorrentSession.session_logger import SessionLogger
+
+from src.TorrentSession.session_logger import SessionLogger
+from src.utils.bencode import decode_bencode
 
 CONTACT_TIMEOUT = 10
 # events: (str is for the http and the num is for the udp)

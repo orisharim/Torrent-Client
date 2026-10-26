@@ -1,0 +1,19 @@
+{
+    "global_settings": {
+        "enable_receiving_peers": true,
+        "enable_dht": true,
+        "enable_port_forwarding": true
+    },
+    "torrents": [
+        {
+            "info_hash": "5b1e0d988fc7a0c9e99bd852071681a59974b39f",
+            "download_path": "/home/ori/Desktop/torrentsfortest/ubuntutestfrfr",
+            "settings": {
+                "max_connections": 50,
+                "download_speed_limit": 0,
+                "upload_speed_limit": 0,
+                "tracker_amount": 4
+            }
+        }
+    ]
+}

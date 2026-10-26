@@ -36,6 +36,9 @@ logs/
 downloaded/*
 !downloaded/.gitkeep
 
+# Personal backend test UI
+local-frontend/
+
 # Local IDE settings
 .idea/
 .vscode/*

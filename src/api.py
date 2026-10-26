@@ -1,12 +1,13 @@
-import torrents_manager
 import asyncio
+import time
 import threading
 from urllib.parse import unquote
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flasgger import Swagger
-import time
-import torrent_settings
+
+from src import torrent_settings, torrents_manager
 
 app = Flask(__name__)
 CORS(app) 
@@ -336,12 +337,6 @@ def _validate_path_field(payload, field):
     return None
 
 
-def _normalize_download_path(download_path):
-    download_path = unquote(download_path)
-    if len(download_path) >= 2 and download_path[0] == download_path[-1] == '"':
-        download_path = download_path[1:-1]
-    return download_path
-
 def _parse_torrent_key(info_hash, download_path):
     try:
         info_hash_bytes = bytes.fromhex(info_hash)
@@ -349,7 +344,9 @@ def _parse_torrent_key(info_hash, download_path):
         return None
     if len(info_hash_bytes) != 20:
         return None
-    return info_hash_bytes, _normalize_download_path(download_path)
+    # The frontend preserves an encoded path layer so a leading slash is not
+    # treated as a path separator by the router. Decode that layer once.
+    return info_hash_bytes, unquote(download_path)
 
 @app.route('/api/torrents', methods=['GET'])
 def get_torrents():
@@ -369,7 +366,6 @@ def get_torrents():
     }
     return jsonify(data), OK
 
-@app.route('/api/torrents/<string:info_hash>/<path:download_path>', methods=['GET'])
 @app.route('/api/torrents/status/<string:info_hash>/<path:download_path>', methods=['GET'])
 def get_torrent_status(info_hash, download_path):
     """Get the status of a torrent.

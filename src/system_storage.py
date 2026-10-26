@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from system_logger import SystemLogger
-from torrent_settings import GlobalTorrentSettings, TorrentSettings
+from src.system_logger import SystemLogger
+from src.torrent_settings import GlobalTorrentSettings, TorrentSettings
 
 
 STORAGE_PATH = Path(__file__).resolve().parent.parent / "storage.json"

@@ -1,6 +1,7 @@
 import hashlib
 from typing import List, Tuple, Dict, Any, Optional
-from utils.bencode import decode_bencode
+
+from src.utils.bencode import decode_bencode
 
 class TorrentFile:
     def __init__(self, path: str):

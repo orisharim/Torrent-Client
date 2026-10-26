@@ -3,16 +3,13 @@ import asyncio
 import random
 import shutil
 from pathlib import Path
-import peers_receiver
-from TorrentSession.peers.peers import Peers
-from utils.port_forward import forward_port
-from utils.port_forward import delete_port
-from TorrentSession.torrent_session import TorrentSession
-from TorrentSession.torrent_file import TorrentFile
-from TorrentSession.torrent_storage import TorrentStorage
-from torrent_settings import GlobalTorrentSettings, TorrentSettings
-import system_storage
-from system_logger import SystemLogger
+
+from src import peers_receiver, system_storage
+from src.system_logger import SystemLogger
+from src.torrent_settings import GlobalTorrentSettings, TorrentSettings
+from src.TorrentSession.torrent_file import TorrentFile
+from src.TorrentSession.torrent_session import TorrentSession
+from src.utils.port_forward import delete_port, forward_port
 
 LISTENING_PORT = 6881
 

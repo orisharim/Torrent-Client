@@ -1,9 +1,11 @@
 import asyncio
 import socket
+
 from async_upnp_client.client_factory import UpnpFactory
 from async_upnp_client.search import async_search
 from async_upnp_client.aiohttp import AiohttpRequester
-from system_logger import SystemLogger
+
+from src.system_logger import SystemLogger
 
 def _get_local_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
