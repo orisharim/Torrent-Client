@@ -33,10 +33,15 @@ const formatEstimatedTime = (torrent: Torrent) => {
 
 export const TorrentTable = () => {
   const {
-    torrents, loading,
-    selected, setSelected, toggleSelect,
-    pauseTorrent, resumeTorrent,
-    deleteTorrents, setTorrentFlags,
+    torrents,
+    loading,
+    selected, 
+    setSelected, 
+    toggleSelect,
+    pauseTorrent, 
+    resumeTorrent,
+    deleteTorrents, 
+    setTorrentFlags,
   } = useTorrents();
   const { filterText, openAddDialog } = useUI();
 
