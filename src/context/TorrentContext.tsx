@@ -1,18 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { useTorrent } from "../hooks/useTorrent";
-import type { TorrentStatus } from "../services/types";
-
-export type Torrent = {
-  id: string; // info_hash
-  name: string;
-  size: number; // GB
-  progress: number; // 0-100
-  speed: number; // MB/s
-  status: TorrentStatus;
-  isDownloading: boolean;
-  isSeeding: boolean;
-  peers: number;
-};
+import type { Torrent, TorrentStatus } from "../services/types";
 
 type TorrentContextType = {
   torrents: Torrent[];

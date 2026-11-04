@@ -98,8 +98,5 @@ The backend doesn't return a name, so the `.torrent` file path is saved in local
 ## Known issues / TODO
 
 - **The production build likely fails.** `tauri.conf.json` expects the built frontend in `../build`, but Vite outputs to `dist`. Change it to `"frontendDist": "../dist"`.
-- **`src-tauri/src/lib.rs` is unused.** It defines 13 placeholder commands (`get_torrents`, `add_torrent`, …), but the frontend never calls `invoke`. Remove them or move the API into Rust.
 - **Magnet links don't work.** The tab exists, but Submit only works for `.torrent` files because the backend has no magnet endpoint.
 - **Finding a newly added torrent is fragile.** After `POST /api/torrents`, the GUI finds the new torrent by matching its `download_path`, so two torrents in the same folder can get mixed up. Have the POST return the `info_hash` instead.
-- **Browser-only mode can't add torrents.** `npm run dev` runs without Tauri, so the native file pickers fail. Use `npm run tauri dev` for the full app.
-- **Leftovers.** `services/types.ts` is out of date (types are redefined in `useTorrent.ts` and `TorrentContext.tsx`), and the Tauri product name has a typo ("bitTurrent").

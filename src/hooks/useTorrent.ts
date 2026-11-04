@@ -1,22 +1,10 @@
 import { API_BASE, encodePath } from "../services/backend";
 import { useEffect, useRef, useState } from "react";
 import { getStartDownloadingOnAdd } from "../services/preferences";
+import type { BackendTorrent } from "../services/types";
 
 const POLL_INTERVAL_MS = 500; 
 
-interface Torrent { 
-    torrentFilePath: string;      
-    info_hash: string;            
-    download_path: string;        
-    timestamp: number;
-    download_speed: number;
-    downloaded_pieces: number;
-    total_pieces: number;
-    total_size: number;
-    is_downloading: boolean;
-    is_seeding: boolean;
-    connected_peers: number;
-}
 
 
 // backend doesn't report a torrent name/file path, so remember the .torrent path at add time
@@ -41,7 +29,7 @@ const parseJson = async <T>(response : Response) : Promise<T> => {
 
 
 
-const getTorrentStatus = async(info_hash : string, download_path : string) : Promise<Torrent> => {
+const getTorrentStatus = async(info_hash : string, download_path : string) : Promise<BackendTorrent> => {
     const response = await fetch(`${API_BASE}/torrents/${info_hash}/${encodePath(download_path)}`, {
         method : "GET",
         headers : jsonHeaders
@@ -63,7 +51,7 @@ const getTorrentStatus = async(info_hash : string, download_path : string) : Pro
 }
 
 
-const getAllTorrents = async() : Promise<Torrent[]> => {
+const getAllTorrents = async() : Promise<BackendTorrent[]> => {
     const response = await fetch(`${API_BASE}/torrents`, {
         method : "GET",
         headers : jsonHeaders
@@ -143,9 +131,9 @@ const changeTorrentStatus = async(
 //hook useTorrent
 
 export function useTorrent(){
-    const[torrents , setTorrents] = useState<Torrent[]>([]);
+    const[torrents , setTorrents] = useState<BackendTorrent[]>([]);
     const[loading , setLoading] = useState(true);
-    const torrentRef = useRef<Torrent[]>([]);
+    const torrentRef = useRef<BackendTorrent[]>([]);
 
     useEffect(() => {
         torrentRef.current = torrents;

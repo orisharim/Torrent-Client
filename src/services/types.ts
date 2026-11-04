@@ -8,26 +8,30 @@ export type GlobalSettings = {
   enable_port_downloading : boolean;
 };
 
-//per torrent settings (flask has 4 fields)
-export type TorrentSettings = {
-  max_connections : number;
-  download_speed_limit : number;
-  upload_speed_limit : number;
-  tracker_amount : number; 
-}
+// raw torrent as tracked by useTorrent (backend fields + the remembered .torrent path)
+export type BackendTorrent = {
+  torrentFilePath: string;
+  info_hash: string;
+  download_path: string;
+  timestamp: number;
+  download_speed: number;
+  downloaded_pieces: number;
+  total_pieces: number;
+  total_size: number;
+  is_downloading: boolean;
+  is_seeding: boolean;
+  connected_peers: number;
+};
 
-//torrent type with parameters
+// torrent as displayed in the UI
 export type Torrent = {
-  torrent_file_path : string;
-  info_hash : string;
-  download_path : string;
-  timestamp : number;
-  download_speed : number;
-  downloaded_pieces : number;
-  total_pieces : number;
-  is_downloading : boolean;
-  is_seeding : boolean; 
-  connected_peers : number;
-}
-
-
+  id: string; // info_hash
+  name: string;
+  size: number; // GB
+  progress: number; // 0-100
+  speed: number; // MB/s
+  status: TorrentStatus;
+  isDownloading: boolean;
+  isSeeding: boolean;
+  peers: number;
+};

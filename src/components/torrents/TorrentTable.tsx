@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Download, MoreVertical, Pause, Play, Trash2, X } from "lucide-react";
-import { useTorrents, type Torrent } from "../../context/TorrentContext";
+import { useTorrents } from "../../context/TorrentContext";
+import type { Torrent } from "../../services/types";
 import { useUI } from "../../context/UIContext";
 import Button from "../ui/Button";
 import ConfirmDialog from "../ui/ConfirmDialog";
