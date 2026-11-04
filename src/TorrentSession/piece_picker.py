@@ -1,8 +1,8 @@
 from random import choice
 from typing import Optional
 
-from src.TorrentSession.peers.peer_connection import PeerConnection
-from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
+from TorrentSession.peers.peer_connection import PeerConnection
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 
 async def select_next_piece(bitfield: bytes, piece_count: int, peers: list[PeerConnection], requested_pieces: set[int]) -> Optional[int]:
     # get the rarest piece from connected, unchoked peers

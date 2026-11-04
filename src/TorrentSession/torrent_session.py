@@ -5,17 +5,17 @@ from hashlib import sha1
 import time
 from typing import Optional
 
-from src.TorrentSession import piece_picker, torrent_storage
-from src.TorrentSession.peers.peer_connection import PeerConnection
-from src.TorrentSession.peers.peers import Peers
-from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
-from src.TorrentSession.piece import Piece
-from src.TorrentSession.session_logger import SessionLogger
-from src.TorrentSession.torrent_file import TorrentFile
-from src.TorrentSession.torrent_storage import TorrentStorage
-from src.TorrentSession.tracker_client import TrackerClient
-from src.torrent_settings import TorrentSettings
-from src.utils.speed_estimator import SpeedEstimator
+from TorrentSession import piece_picker, torrent_storage
+from TorrentSession.peers.peer_connection import PeerConnection
+from TorrentSession.peers.peers import Peers
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.piece import Piece
+from TorrentSession.session_logger import SessionLogger
+from TorrentSession.torrent_file import TorrentFile
+from TorrentSession.torrent_storage import TorrentStorage
+from TorrentSession.tracker_client import TrackerClient
+from torrent_settings import TorrentSettings
+from utils.speed_estimator import SpeedEstimator
 
 class TorrentSession:
     DOWNLOAD_BACKGROUND_INTERVAL = 30.0

@@ -7,7 +7,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flasgger import Swagger
 
-from src import torrent_settings, torrents_manager
+import torrents_manager
+import torrent_settings
 
 app = Flask(__name__)
 CORS(app) 

@@ -2,12 +2,12 @@ import asyncio
 import time
 from typing import Optional, Tuple
 
-from src.TorrentSession.peers import peer_protocol_encoder as protocol_encoder
-from src.TorrentSession.peers.peer_state import PeerState
-from src.TorrentSession.piece import Piece
-from src.TorrentSession.session_logger import SessionLogger
-from src.TorrentSession.torrent_storage import TorrentStorage
-from src.utils.speed_estimator import SpeedEstimator
+import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.peers.peer_state import PeerState
+from TorrentSession.piece import Piece
+from TorrentSession.session_logger import SessionLogger
+from TorrentSession.torrent_storage import TorrentStorage
+from utils.speed_estimator import SpeedEstimator
 
 class PeerConnection:
     CONNECTION_TIMEOUT = 20.0

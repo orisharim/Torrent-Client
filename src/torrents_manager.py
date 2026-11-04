@@ -4,12 +4,13 @@ import random
 import shutil
 from pathlib import Path
 
-from src import peers_receiver, system_storage
-from src.system_logger import SystemLogger
-from src.torrent_settings import GlobalTorrentSettings, TorrentSettings
-from src.TorrentSession.torrent_file import TorrentFile
-from src.TorrentSession.torrent_session import TorrentSession
-from src.utils.port_forward import delete_port, forward_port
+import peers_receiver
+import system_storage
+from system_logger import SystemLogger
+from torrent_settings import GlobalTorrentSettings, TorrentSettings
+from TorrentSession.torrent_file import TorrentFile
+from TorrentSession.torrent_session import TorrentSession
+from utils.port_forward import delete_port, forward_port
 
 LISTENING_PORT = 6881
 
