@@ -1,4 +1,5 @@
 from typing import Optional
+
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 
 class PeerState:

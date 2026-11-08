@@ -1,14 +1,14 @@
 from dataclasses import dataclass
 import asyncio
-
+from random import choice
 from typing import List, Tuple
 from typing_extensions import Optional
 
-from torrent_settings import TorrentSettings
-from Torrent.torrent_file import TorrentFile
 from TorrentSession.peers.peer_connection import PeerConnection
-from TorrentSession.torrent_storage import TorrentStorage
 from TorrentSession.session_logger import SessionLogger
+from TorrentSession.torrent_file import TorrentFile
+from TorrentSession.torrent_storage import TorrentStorage
+from torrent_settings import TorrentSettings
 
 
 @dataclass
@@ -20,6 +20,8 @@ class PeerInfo:
 
 class Peers:
     RECONNECT_INTERVAL = 15.0
+    REGULAR_UNCHOKE_SLOTS = 4
+    OPTIMISTIC_UNCHOKE_SLOTS = 1
 
     def __init__(self, peer_id: bytes, torrent_metadata: TorrentFile, torrent_storage: TorrentStorage, torrent_settings: TorrentSettings, logger: SessionLogger | None = None) -> None:
         self._connections: List[PeerConnection] = []
@@ -35,6 +37,9 @@ class Peers:
         self._is_downloading = False
         self._is_seeding = False
         self._reconnect_task: Optional[asyncio.Task] = None
+        self._optimistic_unchoke_peer: Optional[PeerConnection] = None
+        self._regular_choking_task: Optional[asyncio.Task] = asyncio.create_task(self._regular_choking_loop())
+        self._optimistic_unchoking_task: Optional[asyncio.Task] = asyncio.create_task(self._optimistic_unchoking_loop())
 
     async def _reconnect(self):
         while True:
@@ -46,6 +51,68 @@ class Peers:
             except Exception as exc:
                 if self._logger:
                     self._logger.log_by_file("peers", f"Peer reconnect cycle failed: {exc}")
+
+    async def _regular_choking_loop(self):
+        while True:
+            await asyncio.sleep(10)
+            peers = await self.get_peers()
+            if self._is_downloading:
+                peers = sorted(peers, key=lambda peer: peer.get_download_speed(), reverse=True)
+            elif self._is_seeding:
+                peers = sorted(peers, key=lambda peer: peer.get_upload_speed(), reverse=True)
+            else:
+                continue
+
+            interested_peers = []
+            for peer in peers:
+                if peer.is_peer_interested():
+                    interested_peers.append(peer)
+            regular_unchoke_set = set(interested_peers[:self.REGULAR_UNCHOKE_SLOTS])
+
+            for peer in peers:
+                if peer in regular_unchoke_set:
+                    if await peer.get_am_choking():
+                        await peer.send_unchoke()
+                else:
+                    if peer is not self._optimistic_unchoke_peer:
+                        if not await peer.get_am_choking():
+                            await peer.send_choke()
+
+    async def _optimistic_unchoking_loop(self):
+        while True:
+            await asyncio.sleep(30)
+            peers = await self.get_peers()
+
+            if self._is_downloading:
+                sorted_peers = sorted(peers, key=lambda peer: peer.get_download_speed(), reverse=True)
+            elif self._is_seeding:
+                sorted_peers = sorted(peers, key=lambda peer: peer.get_upload_speed(), reverse=True)
+            else:
+                sorted_peers = peers
+
+            interested_peers = []
+            for peer in sorted_peers:
+                if peer.is_peer_interested():
+                    interested_peers.append(peer)
+            regular_unchoke_set = set(interested_peers[:self.REGULAR_UNCHOKE_SLOTS])
+
+            if self._optimistic_unchoke_peer is not None:
+                if self._optimistic_unchoke_peer not in regular_unchoke_set:
+                    if not await self._optimistic_unchoke_peer.get_am_choking():
+                        await self._optimistic_unchoke_peer.send_choke()
+                self._optimistic_unchoke_peer = None
+
+            choked_interested_peers = []
+            for peer in peers:
+                if await peer.get_am_choking() and peer.is_peer_interested():
+                    choked_interested_peers.append(peer)
+            if not choked_interested_peers:
+                continue
+
+            peer_to_unchoke = choice(choked_interested_peers)
+            await peer_to_unchoke.send_unchoke()
+            self._optimistic_unchoke_peer = peer_to_unchoke
+
 
     async def add_peers(self, peers_info: list[tuple[str, int]]):
         async with self._peers_lock:
@@ -110,7 +177,7 @@ class Peers:
         unchoked_peers = []
         async with self._peers_lock:
             for peer in self._connections:
-                if not await peer.is_choked():
+                if not await peer.is_peer_choking():
                     unchoked_peers.append(peer)
         return unchoked_peers
 
@@ -119,7 +186,7 @@ class Peers:
         async with self._peers_lock:
             unchoked_peers = []
             for peer in self._connections:
-                if not await peer.is_choked():
+                if not await peer.is_peer_choking():
                     unchoked_peers.append(peer)
             return {
                 "connected": len(self._connections),

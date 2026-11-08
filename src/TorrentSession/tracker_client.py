@@ -5,11 +5,12 @@ import urllib.parse
 import urllib.request
 import asyncio
 from typing import List, Tuple, Dict, Any, Optional
-from Torrent.bencode import decode_bencode
-from TorrentSession.peers.peers import Peers
-from TorrentSession.torrent_storage import TorrentStorage
-from TorrentSession.session_logger import SessionLogger
+
 from TorrentSession.contact_tracker import contact_tracker, parse_tracker_response
+from TorrentSession.peers.peers import Peers
+from TorrentSession.session_logger import SessionLogger
+from TorrentSession.torrent_storage import TorrentStorage
+from utils.bencode import decode_bencode
 import TorrentSession.contact_tracker as tracker_protocol
 
 class TrackerClient:

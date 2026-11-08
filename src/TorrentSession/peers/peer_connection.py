@@ -1,11 +1,13 @@
 import asyncio
-from typing import Optional, Tuple
 import time
-from TorrentSession.peers.peer_state import PeerState
+from typing import Optional, Tuple
+
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
+from TorrentSession.peers.peer_state import PeerState
 from TorrentSession.piece import Piece
-from TorrentSession.torrent_storage import TorrentStorage
 from TorrentSession.session_logger import SessionLogger
+from TorrentSession.torrent_storage import TorrentStorage
+from utils.speed_estimator import SpeedEstimator
 
 class PeerConnection:
     CONNECTION_TIMEOUT = 20.0
@@ -36,6 +38,8 @@ class PeerConnection:
         self._upload_tasks: dict[tuple[int,int], tuple[asyncio.Task, float]] = {} # (piece_index, begin), (task, timestamp)
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._requested_pieces: dict[tuple[int, int], tuple[Piece, float]] = {} # (piece_index, begin), (piece, timestamp)
+        self._download_speed_estimator = SpeedEstimator()
+        self._upload_speed_estimator = SpeedEstimator()
 
         self._write_lock = asyncio.Lock()
         self._upload_tasks_lock = asyncio.Lock()
@@ -281,13 +285,9 @@ class PeerConnection:
 
     async def _on_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(True)
-        if self._state.get_am_seeding():
-            await self.send_unchoke()
 
     async def _on_not_interested(self, payload: bytes) -> None:
         self._state.set_peer_interested(False)
-        if self._state.get_am_seeding():
-            await self.send_choke()
 
     async def _on_have(self, payload: bytes) -> None:
         piece_index = protocol_encoder.unpack_have_payload(payload)
@@ -331,6 +331,7 @@ class PeerConnection:
             if not await self.send_message(self.MESSAGE_PIECE, payload):
                 raise ConnectionError("peer rejected the piece message")
             await self._storage.record_uploaded_piece(piece_index, len(data))
+            self._upload_speed_estimator.add_measurement(len(data), time.monotonic())
             if self._logger:
                 self._logger.log_uploaded_piece(
                     piece_index,
@@ -349,7 +350,6 @@ class PeerConnection:
 
     async def start_seeding(self):
         self._state.set_am_seeding(True)
-        return await self.send_unchoke()
 
     async def stop_seeding(self):
         self._state.set_am_seeding(False)
@@ -383,6 +383,7 @@ class PeerConnection:
             async with self._requested_pieces_lock:
                 self._requested_pieces.pop((piece_index, begin), None)
             return
+        self._download_speed_estimator.add_measurement(len(block_data), time.monotonic())
 
         if self._logger:
             self._logger.log_received_block(piece_index, begin, len(block_data), f"{piece.get_received_byte_count()}/{piece.length}", f"{self._host}:{self._port}" )
@@ -529,11 +530,17 @@ class PeerConnection:
         async with self._requested_pieces_lock:
             self._requested_pieces.pop((piece_index, begin), None) 
 
-    async def is_choked(self) -> bool:
+    async def is_peer_choking(self) -> bool:
         return self._state.is_peer_choking()
-         
+
+    async def get_am_choking(self) -> bool:
+        return self._state.get_am_choking()
+    
     async def is_interested(self) -> bool:
         return self._state.is_am_interested()
+
+    def is_peer_interested(self) -> bool:
+        return self._state.is_peer_interested()
      
     async def is_connected(self) -> bool:
         return (self._reader is not None and 
@@ -587,4 +594,8 @@ class PeerConnection:
                 return await self.send_not_interested()
         return True
 
-    
+    def get_download_speed(self) -> float:
+        return self._download_speed_estimator.get_estimated_speed(time.monotonic())
+
+    def get_upload_speed(self) -> float:
+        return self._upload_speed_estimator.get_estimated_speed(time.monotonic())

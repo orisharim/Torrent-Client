@@ -1,11 +1,6 @@
-bitstring
-aiohttp
+async-upnp-client
+attrs
 Flask
-flask-cors
-loguru
-pytest
-pytest-asyncio
-bencode.py
-requests
-miniupnpc
 flasgger
+flask-cors
+typing-extensions

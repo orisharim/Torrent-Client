@@ -1,5 +1,6 @@
 from random import choice
 from typing import Optional
+
 from TorrentSession.peers.peer_connection import PeerConnection
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 
@@ -8,7 +9,7 @@ async def select_next_piece(bitfield: bytes, piece_count: int, peers: list[PeerC
     piece_occs = [0] * piece_count
     
     for peer in peers:
-        if not await peer.is_connected() or await peer.is_choked():
+        if not await peer.is_connected() or await peer.is_peer_choking():
             continue
 
         peer_bitfield = await peer.get_bitfield()
@@ -54,4 +55,3 @@ async def select_peers_for_piece(piece_index: int, peers: list[PeerConnection], 
         if peer in best_peers or len(selected) < max(1, max_peers // 2):
             selected.append(peer)
     return selected or [choice(peers_with_piece)]
-
