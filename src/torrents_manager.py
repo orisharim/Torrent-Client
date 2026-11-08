@@ -13,13 +13,13 @@ from TorrentSession.torrent_session import TorrentSession
 from utils.port_forward import delete_port, forward_port
 
 LISTENING_PORT = 6881
+TORRENT_FILES_DIRECTORY = Path(__file__).resolve().parent.parent / "downloaded"
 
 peer_id = random.randbytes(20)
 torrents: dict[tuple[bytes, str], TorrentSession] = {}
 global_settings = None
 gateway_service = None
 system_logger = SystemLogger()
-TORRENT_FILES_DIRECTORY = Path(__file__).resolve().parent.parent / "downloaded"
 
 
 def _torrent_file_path(info_hash: bytes) -> Path:

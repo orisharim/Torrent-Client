@@ -16,9 +16,7 @@ async def main():
     try:
         await torrents_manager.start_torrent_client()
         res = await torrents_manager.add_new_torrent(torrent_file_path, "/home/ori/Desktop/torrentsfortest/ubuntu1", torrent_settings)
-        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
         await torrents_manager.change_torrent_status(info_hash, "/home/ori/Desktop/torrentsfortest/ubuntu1", is_downloading=True, is_seeding=True)
-        print("@@@@@@@@@@@@@@@@!!!!!!!!!!!!!!!!")
 
        
         while True:

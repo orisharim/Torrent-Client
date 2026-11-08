@@ -225,9 +225,7 @@ class TorrentStorage:
         piece_start, piece_end = self._get_piece_location(piece_index)
         return self._get_file_spans_for_range(piece_start, piece_end)
 
-    async def add_piece(
-        self, piece_index: int, begin: Optional[int], block_data: bytes
-    ) -> None:
+    async def add_piece(self, piece_index: int, begin: Optional[int], block_data: bytes) -> None:
         """Write piece data to disk and update internal structures."""
         if await self.is_piece_downloaded(piece_index):
             return
@@ -263,9 +261,6 @@ class TorrentStorage:
         piece_hash = sha1(assembled_piece).digest()
         expected_hash = self._torrent_metadata.pieces[piece_index]
         return piece_hash == expected_hash
-
-    async def _validate_piece(self, piece_index: int) -> bool:
-        return await self.validate_piece(piece_index)
 
     async def delete_broken_pieces(self) -> None:
         """Validate all downloaded pieces and delete any that are corrupted."""
