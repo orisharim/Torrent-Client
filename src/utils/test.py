@@ -10,13 +10,15 @@ async def main():
 
     torrent_settings = torrents_manager.TorrentSettings()
 
-    torrent_file_path = "/home/ori/Desktop/torrentsfortest/ubun.torrent"
-    download_path = "/home/ori/Desktop/torrentsfortest/ubuntu"
+    torrent_file_path = "C:\\Users\\itays\\Downloads\\Fedora-Budgie-Live-x86_64-45.torrent"
+    download_path = "C:\\Users\\itays\\Downloads\\"
+    # torrent_file_path = "/home/ori/Desktop/torrentsfortest/ubun.torrent"
+    # download_path = "/home/ori/Desktop/torrentsfortest/ubuntu"
     info_hash = torrents_manager.TorrentFile(torrent_file_path).info_hash
     try:
         await torrents_manager.start_torrent_client()
-        res = await torrents_manager.add_new_torrent(torrent_file_path, "/home/ori/Desktop/torrentsfortest/ubuntu1", torrent_settings)
-        await torrents_manager.change_torrent_status(info_hash, "/home/ori/Desktop/torrentsfortest/ubuntu1", is_downloading=True, is_seeding=True)
+        res = await torrents_manager.add_new_torrent(torrent_file_path, download_path, torrent_settings)
+        await torrents_manager.change_torrent_status(info_hash, download_path, is_downloading=True, is_seeding=True)
 
        
         while True:

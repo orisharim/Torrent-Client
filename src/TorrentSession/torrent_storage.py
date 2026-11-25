@@ -1,10 +1,10 @@
 import asyncio
-import fcntl
 import os
 from hashlib import sha1
 from pathlib import Path
-from typing import Optional
+from typing import BinaryIO, Optional
 
+import portalocker
 import TorrentSession.peers.peer_protocol_encoder as protocol_encoder
 from TorrentSession.session_logger import SessionLogger
 from TorrentSession.torrent_file import TorrentFile
@@ -19,7 +19,7 @@ def _write_spans_sync(file_spans: list[tuple[Path, int, int]], data: bytes) -> N
         if not file_path.exists():
             file_path.touch()
         with open(file_path, "r+b") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            portalocker.lock(f, portalocker.LockFlags.EXCLUSIVE)
             try:
                 f.seek(file_offset)
                 chunk = data[bytes_written : bytes_written + bytes_count]
@@ -27,7 +27,7 @@ def _write_spans_sync(file_spans: list[tuple[Path, int, int]], data: bytes) -> N
                 f.flush()
                 bytes_written += bytes_count
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                portalocker.unlock(f)
 
 
 def _delete_spans_sync(file_spans: list[tuple[Path, int, int]]) -> None:
@@ -36,12 +36,12 @@ def _delete_spans_sync(file_spans: list[tuple[Path, int, int]]) -> None:
         if not file_path.exists():
             continue
         with open(file_path, "r+b") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            portalocker.lock(f, portalocker.LockFlags.EXCLUSIVE)
             try:
                 f.seek(file_offset)
                 f.write(b"\x00" * bytes_count)
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                portalocker.unlock(f)
 
 
 def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]:
@@ -51,7 +51,7 @@ def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]
         if not file_path.exists():
             return None
         with open(file_path, "rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            portalocker.lock(f, portalocker.LockFlags.SHARED)
             try:
                 f.seek(file_offset)
                 chunk = f.read(bytes_count)
@@ -59,7 +59,7 @@ def _read_spans_sync(file_spans: list[tuple[Path, int, int]]) -> Optional[bytes]
                     return None  # File does not have enough data
                 piece_data.extend(chunk)
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                portalocker.unlock(f)
     return bytes(piece_data) if piece_data else None
 
 
@@ -69,13 +69,14 @@ def _restore_pieces_sync(
     piece_hashes: list[bytes],
 ) -> set[int]:
     """Validate all available pieces while reusing file handles and locks."""
-    files = []
+    files: list[BinaryIO | None] = []
     try:
         for file_path, _, _ in file_offsets:
             if not file_path.exists():
-                return set()
+                files.append(None)
+                continue
             file = open(file_path, "rb")
-            fcntl.flock(file.fileno(), fcntl.LOCK_SH)
+            portalocker.lock(file, portalocker.LockFlags.SHARED)
             files.append(file)
 
         downloaded_pieces = set()
@@ -95,8 +96,12 @@ def _restore_pieces_sync(
 
                 overlap_start = max(piece_start, file_start)
                 overlap_end = min(range_end, file_end)
-                files[file_index].seek(overlap_start - file_start)
-                chunk = files[file_index].read(overlap_end - overlap_start)
+                file = files[file_index]
+                if file is None:
+                    piece_data = bytearray()
+                    break
+                file.seek(overlap_start - file_start)
+                chunk = file.read(overlap_end - overlap_start)
                 if len(chunk) != overlap_end - overlap_start:
                     piece_data = bytearray()
                     break
@@ -108,8 +113,9 @@ def _restore_pieces_sync(
         return downloaded_pieces
     finally:
         for file in files:
-            fcntl.flock(file.fileno(), fcntl.LOCK_UN)
-            file.close()
+            if file is not None:
+                portalocker.unlock(file)
+                file.close()
 
 
 class TorrentStorage:

@@ -4,3 +4,4 @@ Flask
 flasgger
 flask-cors
 typing-extensions
+portalocker[win32]
