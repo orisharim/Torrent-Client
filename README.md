@@ -6,7 +6,7 @@ All torrent logic lives in the separate **Flask backend**. The GUI talks to it o
 
 ```
 ┌──────────────────────────┐   HTTP (fetch)   ┌──────────────────┐
-│  React GUI (Tauri window)│ ───────────────▶ │  Flask API :5000 │ ──▶ torrent engine
+│  React GUI (Tauri window)│ ───────────────▶│  Flask API :5000 │ ──▶ torrent engine
 └──────────────────────────┘                  └──────────────────┘
 ```
 
